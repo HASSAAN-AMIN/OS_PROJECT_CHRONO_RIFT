@@ -15,6 +15,7 @@ static const char *shared_memory_name = "/chrono_rift_game_state";
 
 static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
+static bool semaphores_ready = false;
 
 static void print_errno(const char *action) {
     std::fprintf(stderr, "%s: %s\n", action, std::strerror(errno));
@@ -74,6 +75,7 @@ static bool initialize_semaphores() {
     if (!initialize_semaphore(&shared_state->relic_sem, 1, "relic_sem")) {
         return false;
     }
+    semaphores_ready = true;
     std::printf("semaphores linked\n");
     return true;
 }
@@ -82,24 +84,58 @@ static void clear_state() {
     std::memset(shared_state, 0, sizeof(game_state));
 }
 
+static void destroy_semaphore(sem_t *target, const char *name) {
+    if (sem_destroy(target) != 0) {
+        std::fprintf(stderr, "sem_destroy failed for %s: %s\n", name, std::strerror(errno));
+    }
+}
+
+static void destroy_semaphores() {
+    if (!semaphores_ready || shared_state == nullptr) {
+        return;
+    }
+    destroy_semaphore(&shared_state->memory_sem, "memory_sem");
+    destroy_semaphore(&shared_state->player_sem, "player_sem");
+    destroy_semaphore(&shared_state->enemy_sem, "enemy_sem");
+    destroy_semaphore(&shared_state->inventory_sem, "inventory_sem");
+    destroy_semaphore(&shared_state->relic_sem, "relic_sem");
+    semaphores_ready = false;
+}
+
+static void unmap_shared_memory() {
+    if (shared_state == nullptr) {
+        return;
+    }
+    if (munmap(shared_state, sizeof(game_state)) != 0) {
+        print_errno("munmap failed");
+    } else {
+        std::printf("shared memory unmapped\n");
+    }
+    shared_state = nullptr;
+}
+
 static void close_descriptor() {
     if (shared_memory_fd >= 0) {
-        close(shared_memory_fd);
+        if (close(shared_memory_fd) != 0) {
+            print_errno("close failed");
+        }
         shared_memory_fd = -1;
     }
 }
 
-static void cleanup() {
-    if (shared_state != nullptr) {
-        munmap(shared_state, sizeof(game_state));
-        shared_state = nullptr;
-    }
-    close_descriptor();
+static void unlink_shared_memory() {
     if (shm_unlink(shared_memory_name) != 0 && errno != ENOENT) {
         print_errno("shm_unlink failed");
     } else {
         std::printf("shared memory unlinked\n");
     }
+}
+
+static void cleanup() {
+    destroy_semaphores();
+    unmap_shared_memory();
+    close_descriptor();
+    unlink_shared_memory();
 }
 
 static void handle_signal(int) {
