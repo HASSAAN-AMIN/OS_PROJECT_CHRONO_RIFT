@@ -7,8 +7,6 @@ struct game_state {
     static constexpr int max_players = 4;
     static constexpr int max_enemies = 9;
     static constexpr int inventory_slots = 20;
-    static constexpr int storage_rows = 4;
-    static constexpr int storage_slots = 40;
 
     int player_hp[max_players];
     int player_stamina[max_players];
@@ -17,7 +15,7 @@ struct game_state {
     int enemy_stamina[max_enemies];
 
     int player_primary_inventory[max_players][inventory_slots];
-    int long_term_storage[storage_rows][storage_slots];
+    int long_term_storage[max_players][inventory_slots];
 
     int solar_core_holder;
     int lunar_blade_holder;
