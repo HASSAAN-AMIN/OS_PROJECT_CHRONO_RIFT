@@ -24,6 +24,7 @@ struct game_state {
     int eclipse_relic_holder;
     int active_player_count;
     int active_enemy_count;
+    char action_log[256];
 
     sem_t state_lock;
     sem_t memory_sem;

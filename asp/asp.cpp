@@ -16,7 +16,7 @@
 static const char *shared_memory_name = "/chrono_rift_game_state";
 static const int enemy_attack_cost = 150;
 static const int enemy_attack_damage = 18;
-static const useconds_t idle_sleep_us = 20000;
+static const useconds_t idle_sleep_us = 50000;
 
 static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
@@ -102,52 +102,56 @@ static bool unlock_state() {
     return true;
 }
 
-static int collect_living_players(int *player_indices, int capacity) {
-    int count = 0;
-    for (int i = 0; i < game_state::max_players && count < capacity; ++i) {
+static int find_living_player() {
+    for (int i = 0; i < game_state::max_players; ++i) {
         if (shared_state->player_hp[i] > 0) {
-            player_indices[count++] = i;
+            return i;
         }
     }
-    return count;
+    return -1;
 }
 
-static int pick_random_player(int *player_indices, int living_count) {
-    if (living_count <= 0) {
-        return -1;
-    }
-    int random_index = std::rand() % living_count;
-    return player_indices[random_index];
+static void write_attack_log(int enemy_id, int player_id) {
+    std::snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "enemy %d hit player %d for 18 dmg",
+        enemy_id + 1,
+        player_id + 1
+    );
 }
 
-static void apply_enemy_attack(int enemy_id) {
-    int player_indices[game_state::max_players];
-    int living_count = collect_living_players(player_indices, game_state::max_players);
-    int target_player = pick_random_player(player_indices, living_count);
-    if (target_player < 0) {
-        return;
-    }
-    int next_hp = shared_state->player_hp[target_player] - enemy_attack_damage;
-    shared_state->player_hp[target_player] = clamp_value(next_hp, 0, 99999);
+static void perform_enemy_attack(int enemy_id, int player_id) {
+    int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
+    shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->enemy_stamina[enemy_id] = 0;
+    write_attack_log(enemy_id, player_id);
 }
 
-static void run_enemy_step(int enemy_id) {
-    if (!lock_state()) {
+static void run_enemy_step_locked(int enemy_id) {
+    if (enemy_id < 0 || enemy_id >= game_state::max_enemies) {
         return;
     }
-    if (enemy_id >= 0 && enemy_id < game_state::max_enemies) {
-        if (shared_state->enemy_hp[enemy_id] > 0 && shared_state->enemy_stamina[enemy_id] >= enemy_attack_cost) {
-            apply_enemy_attack(enemy_id);
-        }
+    if (shared_state->enemy_hp[enemy_id] <= 0) {
+        return;
     }
-    unlock_state();
+    if (shared_state->enemy_stamina[enemy_id] < enemy_attack_cost) {
+        return;
+    }
+    int player_id = find_living_player();
+    if (player_id < 0) {
+        return;
+    }
+    perform_enemy_attack(enemy_id, player_id);
 }
 
 static void *npc_logic_loop(void *arg) {
     int enemy_id = *static_cast<int *>(arg);
     while (running) {
-        run_enemy_step(enemy_id);
+        if (lock_state()) {
+            run_enemy_step_locked(enemy_id);
+            unlock_state();
+        }
         usleep(idle_sleep_us);
     }
     return nullptr;

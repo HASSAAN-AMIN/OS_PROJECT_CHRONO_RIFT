@@ -41,6 +41,7 @@ struct hip_snapshot {
     int solar_core_holder;
     int lunar_blade_holder;
     int eclipse_relic_holder;
+    char action_log[256];
 };
 
 struct window_set {
@@ -166,6 +167,7 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
     snapshot->solar_core_holder = shared_state->solar_core_holder;
     snapshot->lunar_blade_holder = shared_state->lunar_blade_holder;
     snapshot->eclipse_relic_holder = shared_state->eclipse_relic_holder;
+    std::snprintf(snapshot->action_log, sizeof(snapshot->action_log), "%s", shared_state->action_log);
     if (!unlock_memory()) {
         return false;
     }
@@ -547,6 +549,7 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
     wattroff(windows.action_log, COLOR_PAIR(color_artifact) | A_BOLD);
     mvwprintw(windows.action_log, 6, 2, "squad ready: %d/%d", game_state::max_players, game_state::max_players);
     mvwprintw(windows.action_log, 7, 2, "enemy active: %d", game_state::max_enemies);
+    mvwprintw(windows.action_log, 8, 2, "last: %s", snapshot->action_log);
     int turn_player = find_turn_player_from_snapshot(snapshot);
     if (turn_player >= 0) {
         mvwprintw(
@@ -559,7 +562,7 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
     } else {
         mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
     }
-    mvwprintw(windows.action_log, 10, 2, "input: q quits hip");
+    mvwprintw(windows.action_log, 11, 2, "input: q quits hip");
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
