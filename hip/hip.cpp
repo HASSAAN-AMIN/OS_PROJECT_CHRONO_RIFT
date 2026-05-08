@@ -49,8 +49,10 @@ static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
 static volatile sig_atomic_t running = 1;
 static pthread_t render_thread;
+static pthread_t input_thread;
 static bool ncurses_ready = false;
 static window_set windows = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0};
+static pthread_mutex_t ncurses_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void print_errno(const char *action) {
     std::fprintf(stderr, "%s: %s\n", action, std::strerror(errno));
@@ -250,17 +252,29 @@ static bool init_ncurses_ui() {
     if (!ensure_windows()) {
         return false;
     }
+    pthread_mutex_lock(&ncurses_lock);
     ncurses_ready = true;
+    pthread_mutex_unlock(&ncurses_lock);
     return true;
 }
 
 static void shutdown_ncurses_ui() {
+    pthread_mutex_lock(&ncurses_lock);
     if (!ncurses_ready) {
+        pthread_mutex_unlock(&ncurses_lock);
         return;
     }
     destroy_windows();
     endwin();
     ncurses_ready = false;
+    pthread_mutex_unlock(&ncurses_lock);
+}
+
+static bool ui_is_ready() {
+    pthread_mutex_lock(&ncurses_lock);
+    bool ready = ncurses_ready;
+    pthread_mutex_unlock(&ncurses_lock);
+    return ready;
 }
 
 static void draw_bar(char *output, int output_size, int current_value, int max_value, int width) {
@@ -438,7 +452,13 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
+    pthread_mutex_lock(&ncurses_lock);
+    if (!ncurses_ready) {
+        pthread_mutex_unlock(&ncurses_lock);
+        return;
+    }
     if (!ensure_windows()) {
+        pthread_mutex_unlock(&ncurses_lock);
         return;
     }
     draw_system_status(snapshot, frame_id);
@@ -451,6 +471,7 @@ static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
     wrefresh(windows.enemies);
     wrefresh(windows.inventory);
     wrefresh(windows.action_log);
+    pthread_mutex_unlock(&ncurses_lock);
 }
 
 static void *render_loop(void *) {
@@ -465,15 +486,35 @@ static void *render_loop(void *) {
             running = 0;
             break;
         }
-        render_all(&snapshot, frame_id++);
-        int key = getch();
-        if (key == 'q' || key == 'Q') {
-            running = 0;
+        if (!running) {
             break;
         }
+        render_all(&snapshot, frame_id++);
         usleep(frame_sleep_us);
     }
     shutdown_ncurses_ui();
+    return nullptr;
+}
+
+static void *player_input_loop(void *) {
+    while (running) {
+        if (!ui_is_ready()) {
+            usleep(10000);
+            continue;
+        }
+        int key = ERR;
+        pthread_mutex_lock(&ncurses_lock);
+        if (ncurses_ready) {
+            key = getch();
+        }
+        pthread_mutex_unlock(&ncurses_lock);
+        if (key == 'q' || key == 'Q') {
+            running = 0;
+            shutdown_ncurses_ui();
+            break;
+        }
+        usleep(10000);
+    }
     return nullptr;
 }
 
@@ -502,8 +543,21 @@ static bool start_render_thread() {
     return true;
 }
 
+static bool start_input_thread() {
+    if (pthread_create(&input_thread, nullptr, player_input_loop, nullptr) != 0) {
+        print_errno("pthread_create failed");
+        return false;
+    }
+    std::printf("input thread started\n");
+    return true;
+}
+
 static void join_render_thread() {
     pthread_join(render_thread, nullptr);
+}
+
+static void join_input_thread() {
+    pthread_join(input_thread, nullptr);
 }
 
 static void cleanup() {
@@ -527,10 +581,14 @@ int main() {
         cleanup();
         return 1;
     }
-    while (running) {
-        usleep(50000);
+    if (!start_input_thread()) {
+        running = 0;
+        join_render_thread();
+        cleanup();
+        return 1;
     }
     join_render_thread();
+    join_input_thread();
     cleanup();
     std::printf("hip exited cleanly\n");
     return 0;
