@@ -22,6 +22,8 @@ struct game_state {
     int solar_core_holder;
     int lunar_blade_holder;
     int eclipse_relic_holder;
+    int active_player_count;
+    int active_enemy_count;
 
     sem_t state_lock;
     sem_t memory_sem;

@@ -14,6 +14,7 @@
 static const char *shared_memory_name = "/chrono_rift_game_state";
 static const int player_stamina_cap = 100;
 static const int enemy_stamina_cap = 150;
+static const unsigned int seeded_roll_value = 880;
 
 static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
@@ -87,12 +88,6 @@ static bool initialize_semaphores() {
 
 static void clear_state() {
     std::memset(shared_state, 0, sizeof(game_state));
-    for (int i = 0; i < game_state::max_players; ++i) {
-        shared_state->player_speed[i] = 10;
-    }
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        shared_state->enemy_speed[i] = 8;
-    }
 }
 
 static int clamp_value(int value, int low, int high) {
@@ -150,6 +145,49 @@ static void update_enemy_stamina() {
         int next_value = shared_state->enemy_stamina[i] + shared_state->enemy_speed[i];
         shared_state->enemy_stamina[i] = clamp_value(next_value, 0, enemy_stamina_cap);
     }
+}
+
+static int roll_player_hp() {
+    return 880 + (std::rand() % 901);
+}
+
+static int roll_enemy_hp() {
+    return 80 + (std::rand() % 151);
+}
+
+static int roll_enemy_speed() {
+    return (std::rand() % 21) + 10;
+}
+
+static void initialize_players() {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        shared_state->player_hp[i] = roll_player_hp();
+        shared_state->player_speed[i] = 100 / 4;
+        shared_state->player_stamina[i] = 0;
+    }
+}
+
+static void initialize_enemies() {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        shared_state->enemy_hp[i] = roll_enemy_hp();
+        shared_state->enemy_speed[i] = roll_enemy_speed();
+        shared_state->enemy_stamina[i] = 0;
+    }
+}
+
+static bool initialize_seeded_stats() {
+    std::srand(seeded_roll_value);
+    if (!lock_state()) {
+        return false;
+    }
+    shared_state->active_player_count = game_state::max_players;
+    shared_state->active_enemy_count = game_state::max_enemies;
+    initialize_players();
+    initialize_enemies();
+    if (!unlock_state()) {
+        return false;
+    }
+    return true;
 }
 
 static bool tick_stamina_progression() {
@@ -260,6 +298,9 @@ static bool setup_shared_state() {
     }
     clear_state();
     if (!initialize_semaphores()) {
+        return false;
+    }
+    if (!initialize_seeded_stats()) {
         return false;
     }
     return true;

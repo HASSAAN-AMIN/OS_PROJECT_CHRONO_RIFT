@@ -461,11 +461,13 @@ static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
         pthread_mutex_unlock(&ncurses_lock);
         return;
     }
+    clear();
     draw_system_status(snapshot, frame_id);
     draw_players(snapshot);
     draw_enemies(snapshot);
     draw_inventory(snapshot);
     draw_action_log(snapshot, frame_id);
+    refresh();
     wrefresh(windows.status);
     wrefresh(windows.players);
     wrefresh(windows.enemies);
