@@ -1,6 +1,7 @@
 #ifndef gamestate_h
 #define gamestate_h
 
+#include <pthread.h>
 #include <semaphore.h>
 
 struct game_state {
@@ -30,14 +31,17 @@ struct game_state {
     int player_primary_inventory[max_players][inventory_slots];
     int long_term_storage[max_players][inventory_slots];
 
-    int solar_core_holder;
-    int lunar_blade_holder;
+    int solar_core_holder = -1;
+    int lunar_blade_holder = -1;
     int eclipse_relic_holder;
+    int solar_core_waiter = -1;
+    int lunar_blade_waiter = -1;
     int current_dropped_weapon = 0;
     int active_player_count;
     int active_enemy_count;
     char action_log[256];
 
+    pthread_mutex_t resource_lock;
     sem_t state_lock;
     sem_t memory_sem;
     sem_t player_sem;

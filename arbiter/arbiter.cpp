@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include <fcntl.h>
+#include <pthread.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -15,10 +16,13 @@ static const char *shared_memory_name = "/chrono_rift_game_state";
 static const int player_stamina_cap = 100;
 static const int enemy_stamina_cap = 150;
 static const unsigned int seeded_roll_value = 880;
+static const useconds_t deadlock_check_sleep_us = 2000000;
 
 static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
 static bool semaphores_ready = false;
+static bool resource_lock_ready = false;
+static pthread_t deadlock_monitor_thread;
 
 static void print_errno(const char *action) {
     std::fprintf(stderr, "%s: %s\n", action, std::strerror(errno));
@@ -86,8 +90,51 @@ static bool initialize_semaphores() {
     return true;
 }
 
+static bool initialize_resource_lock() {
+    pthread_mutexattr_t attr;
+    if (pthread_mutexattr_init(&attr) != 0) {
+        std::fprintf(stderr, "pthread_mutexattr_init failed\n");
+        return false;
+    }
+    if (pthread_mutexattr_setpshared(&attr, PTHREAD_PROCESS_SHARED) != 0) {
+        std::fprintf(stderr, "pthread_mutexattr_setpshared failed\n");
+        pthread_mutexattr_destroy(&attr);
+        return false;
+    }
+    if (pthread_mutex_init(&shared_state->resource_lock, &attr) != 0) {
+        std::fprintf(stderr, "pthread_mutex_init failed\n");
+        pthread_mutexattr_destroy(&attr);
+        return false;
+    }
+    pthread_mutexattr_destroy(&attr);
+    resource_lock_ready = true;
+    return true;
+}
+
 static void clear_state() {
-    std::memset(shared_state, 0, sizeof(game_state));
+    for (int i = 0; i < game_state::max_players; ++i) {
+        shared_state->player_hp[i] = 0;
+        shared_state->player_speed[i] = 0;
+        shared_state->player_stamina[i] = 0;
+        for (int j = 0; j < game_state::inventory_slots; ++j) {
+            shared_state->player_primary_inventory[i][j] = 0;
+            shared_state->long_term_storage[i][j] = 0;
+        }
+    }
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        shared_state->enemy_hp[i] = 0;
+        shared_state->enemy_speed[i] = 0;
+        shared_state->enemy_stamina[i] = 0;
+    }
+    shared_state->eclipse_relic_holder = 0;
+    shared_state->solar_core_holder = -1;
+    shared_state->lunar_blade_holder = -1;
+    shared_state->solar_core_waiter = -1;
+    shared_state->lunar_blade_waiter = -1;
+    shared_state->current_dropped_weapon = 0;
+    shared_state->active_player_count = 0;
+    shared_state->active_enemy_count = 0;
+    shared_state->action_log[0] = '\0';
 }
 
 static int clamp_value(int value, int low, int high) {
@@ -211,6 +258,66 @@ static void run_stamina_loop() {
     }
 }
 
+static bool is_player_entity(int entity_id) {
+    return entity_id >= 0 && entity_id < game_state::max_players;
+}
+
+static bool is_enemy_entity(int entity_id) {
+    int enemy_base = game_state::max_players;
+    return entity_id >= enemy_base && entity_id < enemy_base + game_state::max_enemies;
+}
+
+static bool has_circular_wait_locked() {
+    if (shared_state->solar_core_holder < 0 || shared_state->lunar_blade_holder < 0) {
+        return false;
+    }
+    if (shared_state->solar_core_waiter < 0 || shared_state->lunar_blade_waiter < 0) {
+        return false;
+    }
+    if (shared_state->solar_core_holder != shared_state->lunar_blade_waiter) {
+        return false;
+    }
+    if (shared_state->lunar_blade_holder != shared_state->solar_core_waiter) {
+        return false;
+    }
+    return true;
+}
+
+static void break_deadlock_locked() {
+    if (is_enemy_entity(shared_state->lunar_blade_holder)) {
+        shared_state->lunar_blade_holder = -1;
+    } else if (is_enemy_entity(shared_state->solar_core_holder)) {
+        shared_state->solar_core_holder = -1;
+    } else if (is_player_entity(shared_state->lunar_blade_holder)) {
+        shared_state->lunar_blade_holder = -1;
+    } else {
+        shared_state->solar_core_holder = -1;
+    }
+    std::snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock broken by arbiter");
+}
+
+static void *deadlock_monitor_loop(void *) {
+    while (true) {
+        usleep(deadlock_check_sleep_us);
+        if (pthread_mutex_lock(&shared_state->resource_lock) != 0) {
+            continue;
+        }
+        if (has_circular_wait_locked()) {
+            break_deadlock_locked();
+        }
+        pthread_mutex_unlock(&shared_state->resource_lock);
+    }
+    return nullptr;
+}
+
+static bool start_deadlock_monitor_thread() {
+    if (pthread_create(&deadlock_monitor_thread, nullptr, deadlock_monitor_loop, nullptr) != 0) {
+        std::fprintf(stderr, "pthread_create deadlock monitor failed\n");
+        return false;
+    }
+    return true;
+}
+
 static void destroy_semaphore(sem_t *target, const char *name) {
     if (sem_destroy(target) != 0) {
         std::fprintf(stderr, "sem_destroy failed for %s: %s\n", name, std::strerror(errno));
@@ -228,6 +335,16 @@ static void destroy_semaphores() {
     destroy_semaphore(&shared_state->inventory_sem, "inventory_sem");
     destroy_semaphore(&shared_state->relic_sem, "relic_sem");
     semaphores_ready = false;
+}
+
+static void destroy_resource_lock() {
+    if (!resource_lock_ready || shared_state == nullptr) {
+        return;
+    }
+    if (pthread_mutex_destroy(&shared_state->resource_lock) != 0) {
+        std::fprintf(stderr, "pthread_mutex_destroy failed\n");
+    }
+    resource_lock_ready = false;
 }
 
 static void unmap_shared_memory() {
@@ -260,6 +377,7 @@ static void unlink_shared_memory() {
 }
 
 static void cleanup() {
+    destroy_resource_lock();
     destroy_semaphores();
     unmap_shared_memory();
     close_descriptor();
@@ -297,6 +415,9 @@ static bool setup_shared_state() {
         return false;
     }
     clear_state();
+    if (!initialize_resource_lock()) {
+        return false;
+    }
     if (!initialize_semaphores()) {
         return false;
     }
@@ -311,6 +432,9 @@ int main() {
         return 1;
     }
     if (!setup_shared_state()) {
+        return 1;
+    }
+    if (!start_deadlock_monitor_thread()) {
         return 1;
     }
     std::printf("arbiter ready\n");
