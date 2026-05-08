@@ -12,6 +12,8 @@
 #include "../gamestate.h"
 
 static const char *shared_memory_name = "/chrono_rift_game_state";
+static const int player_stamina_cap = 100;
+static const int enemy_stamina_cap = 150;
 
 static int shared_memory_fd = -1;
 static game_state *shared_state = nullptr;
@@ -60,6 +62,9 @@ static bool initialize_semaphore(sem_t *target, unsigned int value, const char *
 }
 
 static bool initialize_semaphores() {
+    if (!initialize_semaphore(&shared_state->state_lock, 1, "state_lock")) {
+        return false;
+    }
     if (!initialize_semaphore(&shared_state->memory_sem, 1, "memory_sem")) {
         return false;
     }
@@ -82,6 +87,90 @@ static bool initialize_semaphores() {
 
 static void clear_state() {
     std::memset(shared_state, 0, sizeof(game_state));
+    for (int i = 0; i < game_state::max_players; ++i) {
+        shared_state->player_speed[i] = 10;
+    }
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        shared_state->enemy_speed[i] = 8;
+    }
+}
+
+static int clamp_value(int value, int low, int high) {
+    if (value < low) {
+        return low;
+    }
+    if (value > high) {
+        return high;
+    }
+    return value;
+}
+
+static bool lock_state() {
+    while (sem_wait(&shared_state->state_lock) != 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        print_errno("sem_wait state_lock failed");
+        return false;
+    }
+    return true;
+}
+
+static bool unlock_state() {
+    if (sem_post(&shared_state->state_lock) != 0) {
+        print_errno("sem_post state_lock failed");
+        return false;
+    }
+    return true;
+}
+
+static bool is_active_player(int index) {
+    return shared_state->player_hp[index] > 0;
+}
+
+static bool is_active_enemy(int index) {
+    return shared_state->enemy_hp[index] > 0;
+}
+
+static void update_player_stamina() {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (!is_active_player(i)) {
+            continue;
+        }
+        int next_value = shared_state->player_stamina[i] + shared_state->player_speed[i];
+        shared_state->player_stamina[i] = clamp_value(next_value, 0, player_stamina_cap);
+    }
+}
+
+static void update_enemy_stamina() {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (!is_active_enemy(i)) {
+            continue;
+        }
+        int next_value = shared_state->enemy_stamina[i] + shared_state->enemy_speed[i];
+        shared_state->enemy_stamina[i] = clamp_value(next_value, 0, enemy_stamina_cap);
+    }
+}
+
+static bool tick_stamina_progression() {
+    if (!lock_state()) {
+        return false;
+    }
+    update_player_stamina();
+    update_enemy_stamina();
+    if (!unlock_state()) {
+        return false;
+    }
+    return true;
+}
+
+static void run_stamina_loop() {
+    while (true) {
+        sleep(1);
+        if (!tick_stamina_progression()) {
+            break;
+        }
+    }
 }
 
 static void destroy_semaphore(sem_t *target, const char *name) {
@@ -94,6 +183,7 @@ static void destroy_semaphores() {
     if (!semaphores_ready || shared_state == nullptr) {
         return;
     }
+    destroy_semaphore(&shared_state->state_lock, "state_lock");
     destroy_semaphore(&shared_state->memory_sem, "memory_sem");
     destroy_semaphore(&shared_state->player_sem, "player_sem");
     destroy_semaphore(&shared_state->enemy_sem, "enemy_sem");
@@ -183,6 +273,6 @@ int main() {
         return 1;
     }
     std::printf("arbiter ready\n");
-    pause();
+    run_stamina_loop();
     return 0;
 }

@@ -9,9 +9,11 @@ struct game_state {
     static constexpr int inventory_slots = 20;
 
     int player_hp[max_players];
+    int player_speed[max_players];
     int player_stamina[max_players];
 
     int enemy_hp[max_enemies];
+    int enemy_speed[max_enemies];
     int enemy_stamina[max_enemies];
 
     int player_primary_inventory[max_players][inventory_slots];
@@ -21,6 +23,7 @@ struct game_state {
     int lunar_blade_holder;
     int eclipse_relic_holder;
 
+    sem_t state_lock;
     sem_t memory_sem;
     sem_t player_sem;
     sem_t enemy_sem;
