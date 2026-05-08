@@ -13,25 +13,27 @@
 
 #include "../gamestate.h"
 
-static const char *shared_memory_name = "/chrono_rift_game_state";
-static const int enemy_attack_cost = 150;
-static const int enemy_attack_damage = 18;
-static const int enemy_stun_chance_percent = 20;
-static const int stun_duration_seconds = 3;
-static const useconds_t idle_sleep_us = 50000;
+using namespace std;
 
-static int shared_memory_fd = -1;
-static game_state *shared_state = nullptr;
-static volatile sig_atomic_t running = 1;
-static pthread_t npc_threads[game_state::max_enemies];
-static int npc_ids[game_state::max_enemies];
-static int started_thread_count = 0;
+const char *shared_memory_name = "/chrono_rift_game_state";
+const int enemy_attack_cost = 150;
+const int enemy_attack_damage = 18;
+const int enemy_stun_chance_percent = 20;
+const int stun_duration_seconds = 3;
+const useconds_t idle_sleep_us = 50000;
 
-static void print_errno(const char *action) {
-    std::fprintf(stderr, "%s: %s\n", action, std::strerror(errno));
+int shared_memory_fd = -1;
+game_state *shared_state = nullptr;
+volatile sig_atomic_t running = 1;
+pthread_t npc_threads[game_state::max_enemies];
+int npc_ids[game_state::max_enemies];
+int started_thread_count = 0;
+
+void print_errno(const char *action) {
+    fprintf(stderr, "%s: %s\n", action, strerror(errno));
 }
 
-static int clamp_value(int value, int low, int high) {
+int clamp_value(int value, int low, int high) {
     if (value < low) {
         return low;
     }
@@ -41,28 +43,28 @@ static int clamp_value(int value, int low, int high) {
     return value;
 }
 
-static bool open_shared_memory() {
+bool open_shared_memory() {
     shared_memory_fd = shm_open(shared_memory_name, O_RDWR, 0600);
     if (shared_memory_fd < 0) {
         print_errno("shm_open failed");
         return false;
     }
-    std::printf("shared memory linked\n");
+    printf("shared memory linked\n");
     return true;
 }
 
-static bool map_shared_memory() {
+bool map_shared_memory() {
     void *mapped = mmap(nullptr, sizeof(game_state), PROT_READ | PROT_WRITE, MAP_SHARED, shared_memory_fd, 0);
     if (mapped == MAP_FAILED) {
         print_errno("mmap failed");
         return false;
     }
     shared_state = static_cast<game_state *>(mapped);
-    std::printf("shared memory mapped\n");
+    printf("shared memory mapped\n");
     return true;
 }
 
-static void close_shared_memory_fd() {
+void close_shared_memory_fd() {
     if (shared_memory_fd < 0) {
         return;
     }
@@ -72,7 +74,7 @@ static void close_shared_memory_fd() {
     shared_memory_fd = -1;
 }
 
-static void unmap_shared_memory() {
+void unmap_shared_memory() {
     if (shared_state == nullptr) {
         return;
     }
@@ -82,7 +84,7 @@ static void unmap_shared_memory() {
     shared_state = nullptr;
 }
 
-static bool lock_state() {
+bool lock_state() {
     while (sem_wait(&shared_state->state_lock) != 0) {
         if (errno == EINTR) {
             if (!running) {
@@ -96,7 +98,7 @@ static bool lock_state() {
     return true;
 }
 
-static bool unlock_state() {
+bool unlock_state() {
     if (sem_post(&shared_state->state_lock) != 0) {
         print_errno("sem_post state_lock failed");
         return false;
@@ -104,7 +106,7 @@ static bool unlock_state() {
     return true;
 }
 
-static bool register_asp_pid() {
+bool register_asp_pid() {
     if (!lock_state()) {
         return false;
     }
@@ -115,7 +117,7 @@ static bool register_asp_pid() {
     return true;
 }
 
-static int find_living_player() {
+int find_living_player() {
     for (int i = 0; i < game_state::max_players; ++i) {
         if (shared_state->player_hp[i] > 0) {
             return i;
@@ -124,13 +126,13 @@ static int find_living_player() {
     return -1;
 }
 
-static bool enemy_is_stunned_locked(int enemy_id) {
-    time_t now = std::time(nullptr);
+bool enemy_is_stunned_locked(int enemy_id) {
+    time_t now = time(nullptr);
     return now < shared_state->stun_end_time[enemy_id];
 }
 
-static void write_attack_log(int enemy_id, int player_id) {
-    std::snprintf(
+void write_attack_log(int enemy_id, int player_id) {
+    snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
         "enemy %d hit player %d for 18 dmg",
@@ -139,8 +141,8 @@ static void write_attack_log(int enemy_id, int player_id) {
     );
 }
 
-static void write_enemy_stun_log(int enemy_id, int player_id) {
-    std::snprintf(
+void write_enemy_stun_log(int enemy_id, int player_id) {
+    snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
         "enemy %d stunned player %d for 3s",
@@ -149,24 +151,24 @@ static void write_enemy_stun_log(int enemy_id, int player_id) {
     );
 }
 
-static void perform_enemy_attack(int enemy_id, int player_id) {
+void perform_enemy_attack(int enemy_id, int player_id) {
     int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->enemy_stamina[enemy_id] = 0;
     write_attack_log(enemy_id, player_id);
 }
 
-static void perform_enemy_stun_attack(int enemy_id, int player_id) {
-    shared_state->player_stun_end_time[player_id] = std::time(nullptr) + stun_duration_seconds;
+void perform_enemy_stun_attack(int enemy_id, int player_id) {
+    shared_state->player_stun_end_time[player_id] = time(nullptr) + stun_duration_seconds;
     shared_state->enemy_stamina[enemy_id] = 0;
     write_enemy_stun_log(enemy_id, player_id);
 }
 
-static bool should_use_stun_attack() {
-    return (std::rand() % 100) < enemy_stun_chance_percent;
+bool should_use_stun_attack() {
+    return (rand() % 100) < enemy_stun_chance_percent;
 }
 
-static void run_enemy_step_locked(int enemy_id) {
+void run_enemy_step_locked(int enemy_id) {
     if (enemy_id < 0 || enemy_id >= game_state::max_enemies) {
         return;
     }
@@ -187,7 +189,7 @@ static void run_enemy_step_locked(int enemy_id) {
     }
 }
 
-static void *npc_logic_loop(void *arg) {
+void *npc_logic_loop(void *arg) {
     int enemy_id = *static_cast<int *>(arg);
     while (running) {
         if (lock_state()) {
@@ -201,23 +203,23 @@ static void *npc_logic_loop(void *arg) {
     return nullptr;
 }
 
-static void handle_signal(int) {
+void handle_signal(int) {
     running = 0;
 }
 
-static bool register_signals() {
-    if (std::signal(SIGINT, handle_signal) == SIG_ERR) {
-        std::fprintf(stderr, "failed to register sigint handler\n");
+bool register_signals() {
+    if (signal(SIGINT, handle_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigint handler\n");
         return false;
     }
-    if (std::signal(SIGTERM, handle_signal) == SIG_ERR) {
-        std::fprintf(stderr, "failed to register sigterm handler\n");
+    if (signal(SIGTERM, handle_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigterm handler\n");
         return false;
     }
     return true;
 }
 
-static bool start_npc_threads() {
+bool start_npc_threads() {
     for (int i = 0; i < game_state::max_enemies; ++i) {
         npc_ids[i] = i;
         if (pthread_create(&npc_threads[i], nullptr, npc_logic_loop, &npc_ids[i]) != 0) {
@@ -227,23 +229,23 @@ static bool start_npc_threads() {
         }
         started_thread_count++;
     }
-    std::printf("npc threads started\n");
+    printf("npc threads started\n");
     return true;
 }
 
-static void join_npc_threads() {
+void join_npc_threads() {
     for (int i = 0; i < started_thread_count; ++i) {
         pthread_join(npc_threads[i], nullptr);
     }
 }
 
-static void cleanup() {
+void cleanup() {
     unmap_shared_memory();
     close_shared_memory_fd();
 }
 
 int main() {
-    std::srand(static_cast<unsigned int>(std::time(nullptr)) ^ static_cast<unsigned int>(getpid()));
+    srand(static_cast<unsigned int>(time(nullptr)) ^ static_cast<unsigned int>(getpid()));
     if (!register_signals()) {
         return 1;
     }
@@ -265,6 +267,6 @@ int main() {
     }
     join_npc_threads();
     cleanup();
-    std::printf("asp exited cleanly\n");
+    printf("asp exited cleanly\n");
     return 0;
 }

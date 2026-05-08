@@ -14,30 +14,32 @@
 
 #include "../gamestate.h"
 
-static const char *shared_memory_name = "/chrono_rift_game_state";
-static const int max_stat_value = 100;
-static const useconds_t frame_sleep_us = 16666;
-static const int color_border = 1;
-static const int color_player_hp = 2;
-static const int color_player_stamina = 3;
-static const int color_enemy_hp = 4;
-static const int color_enemy_stamina = 5;
-static const int color_artifact = 6;
-static const int color_empty_slot = 7;
-static const int color_solar_slot = 8;
-static const int color_lunar_slot = 9;
-static const int player_turn_stamina = 100;
-static const int enemy_turn_stamina = 150;
-static const int player_base_damage = 10;
-static const int player_exhaust_damage = 10;
-static const int player_skip_stamina = 50;
-static const int player_heal_amount = 178;
-static const int player_max_hp = 1780;
-static const int solar_core_inventory_id = 10;
-static const int lunar_blade_inventory_id = 11;
-static const int player_stun_damage = 15;
-static const int stun_duration_seconds = 3;
-static bool swap_happened_last = false;
+using namespace std;
+
+const char *shared_memory_name = "/chrono_rift_game_state";
+const int max_stat_value = 100;
+const useconds_t frame_sleep_us = 16666;
+const int color_border = 1;
+const int color_player_hp = 2;
+const int color_player_stamina = 3;
+const int color_enemy_hp = 4;
+const int color_enemy_stamina = 5;
+const int color_artifact = 6;
+const int color_empty_slot = 7;
+const int color_solar_slot = 8;
+const int color_lunar_slot = 9;
+const int player_turn_stamina = 100;
+const int enemy_turn_stamina = 150;
+const int player_base_damage = 10;
+const int player_exhaust_damage = 10;
+const int player_skip_stamina = 50;
+const int player_heal_amount = 178;
+const int player_max_hp = 1780;
+const int solar_core_inventory_id = 10;
+const int lunar_blade_inventory_id = 11;
+const int player_stun_damage = 15;
+const int stun_duration_seconds = 3;
+bool swap_happened_last = false;
 
 struct hip_snapshot {
     int player_hp[game_state::max_players];
@@ -65,20 +67,20 @@ struct window_set {
     int cols;
 };
 
-static int shared_memory_fd = -1;
-static game_state *shared_state = nullptr;
-static volatile sig_atomic_t running = 1;
-static pthread_t render_thread;
-static pthread_t input_thread;
-static bool ncurses_ready = false;
-static window_set windows = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0};
-static pthread_mutex_t ncurses_lock = PTHREAD_MUTEX_INITIALIZER;
+int shared_memory_fd = -1;
+game_state *shared_state = nullptr;
+volatile sig_atomic_t running = 1;
+pthread_t render_thread;
+pthread_t input_thread;
+bool ncurses_ready = false;
+window_set windows = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0};
+pthread_mutex_t ncurses_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void print_errno(const char *action) {
-    std::fprintf(stderr, "%s: %s\n", action, std::strerror(errno));
+void print_errno(const char *action) {
+    fprintf(stderr, "%s: %s\n", action, strerror(errno));
 }
 
-static int clamp_value(int value, int low, int high) {
+int clamp_value(int value, int low, int high) {
     if (value < low) {
         return low;
     }
@@ -88,28 +90,28 @@ static int clamp_value(int value, int low, int high) {
     return value;
 }
 
-static bool open_shared_memory() {
+bool open_shared_memory() {
     shared_memory_fd = shm_open(shared_memory_name, O_RDWR, 0600);
     if (shared_memory_fd < 0) {
         print_errno("shm_open failed");
         return false;
     }
-    std::printf("shared memory linked\n");
+    printf("shared memory linked\n");
     return true;
 }
 
-static bool map_shared_memory() {
+bool map_shared_memory() {
     void *mapped = mmap(nullptr, sizeof(game_state), PROT_READ | PROT_WRITE, MAP_SHARED, shared_memory_fd, 0);
     if (mapped == MAP_FAILED) {
         print_errno("mmap failed");
         return false;
     }
     shared_state = static_cast<game_state *>(mapped);
-    std::printf("shared memory mapped\n");
+    printf("shared memory mapped\n");
     return true;
 }
 
-static void close_shared_memory_fd() {
+void close_shared_memory_fd() {
     if (shared_memory_fd >= 0) {
         if (close(shared_memory_fd) != 0) {
             print_errno("close failed");
@@ -118,7 +120,7 @@ static void close_shared_memory_fd() {
     }
 }
 
-static void unmap_shared_memory() {
+void unmap_shared_memory() {
     if (shared_state == nullptr) {
         return;
     }
@@ -128,7 +130,7 @@ static void unmap_shared_memory() {
     shared_state = nullptr;
 }
 
-static bool lock_memory() {
+bool lock_memory() {
     if (shared_state == nullptr) {
         return false;
     }
@@ -145,7 +147,7 @@ static bool lock_memory() {
     return true;
 }
 
-static bool unlock_memory() {
+bool unlock_memory() {
     if (shared_state == nullptr) {
         return false;
     }
@@ -156,7 +158,7 @@ static bool unlock_memory() {
     return true;
 }
 
-static bool copy_snapshot(hip_snapshot *snapshot) {
+bool copy_snapshot(hip_snapshot *snapshot) {
     if (snapshot == nullptr) {
         return false;
     }
@@ -181,15 +183,15 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
     snapshot->lunar_blade_holder = shared_state->lunar_blade_holder;
     snapshot->eclipse_relic_holder = shared_state->eclipse_relic_holder;
     snapshot->current_dropped_weapon = shared_state->current_dropped_weapon;
-    std::snprintf(snapshot->action_log, sizeof(snapshot->action_log), "%s", shared_state->action_log);
+    snprintf(snapshot->action_log, sizeof(snapshot->action_log), "%s", shared_state->action_log);
     if (!unlock_memory()) {
         return false;
     }
     return true;
 }
 
-static int find_turn_player_locked() {
-    time_t now = std::time(nullptr);
+int find_turn_player_locked() {
+    time_t now = time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
         bool stunned = now < shared_state->player_stun_end_time[i];
         if (!stunned && shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
@@ -199,7 +201,7 @@ static int find_turn_player_locked() {
     return -1;
 }
 
-static int collect_living_enemies_locked(int *enemy_indices, int capacity) {
+int collect_living_enemies_locked(int *enemy_indices, int capacity) {
     int count = 0;
     for (int i = 0; i < game_state::max_enemies && count < capacity; ++i) {
         if (shared_state->enemy_hp[i] > 0) {
@@ -209,15 +211,15 @@ static int collect_living_enemies_locked(int *enemy_indices, int capacity) {
     return count;
 }
 
-static int pick_random_enemy_locked(int *enemy_indices, int enemy_count) {
+int pick_random_enemy_locked(int *enemy_indices, int enemy_count) {
     if (enemy_count <= 0) {
         return -1;
     }
-    int random_index = std::rand() % enemy_count;
+    int random_index = rand() % enemy_count;
     return enemy_indices[random_index];
 }
 
-static int weapon_size_from_id(int weapon_id) {
+int weapon_size_from_id(int weapon_id) {
     if (weapon_id == game_state::splinter_stick_id) {
         return game_state::splinter_stick;
     }
@@ -236,7 +238,7 @@ static int weapon_size_from_id(int weapon_id) {
     return 0;
 }
 
-static const char *weapon_name_from_id(int weapon_id) {
+const char *weapon_name_from_id(int weapon_id) {
     if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
         return "splinter";
     }
@@ -255,7 +257,7 @@ static const char *weapon_name_from_id(int weapon_id) {
     return "unknown";
 }
 
-static const char *weapon_label_from_id(int weapon_id) {
+const char *weapon_label_from_id(int weapon_id) {
     if (weapon_id == 0) {
         return "[ empty  ]";
     }
@@ -277,7 +279,7 @@ static const char *weapon_label_from_id(int weapon_id) {
     return "[unknown  ]";
 }
 
-static int weapon_color_from_id(int weapon_id) {
+int weapon_color_from_id(int weapon_id) {
     if (weapon_id == 0) {
         return color_empty_slot;
     }
@@ -299,7 +301,7 @@ static int weapon_color_from_id(int weapon_id) {
     return color_artifact;
 }
 
-static int weapon_attr_from_id(int weapon_id) {
+int weapon_attr_from_id(int weapon_id) {
     if (weapon_id == 0) {
         return A_DIM;
     }
@@ -312,7 +314,7 @@ static int weapon_attr_from_id(int weapon_id) {
     return A_NORMAL;
 }
 
-static int find_contiguous_empty_slots(const int *row, int slot_count, int required_slots) {
+int find_contiguous_empty_slots(const int *row, int slot_count, int required_slots) {
     int run = 0;
     for (int i = 0; i < slot_count; ++i) {
         if (row[i] == 0) {
@@ -327,19 +329,19 @@ static int find_contiguous_empty_slots(const int *row, int slot_count, int requi
     return -1;
 }
 
-static void write_weapon_slots(int *row, int start_index, int slot_count, int weapon_id) {
+void write_weapon_slots(int *row, int start_index, int slot_count, int weapon_id) {
     for (int i = 0; i < slot_count; ++i) {
         row[start_index + i] = weapon_id;
     }
 }
 
-static void clear_weapon_slots(int *row, int start_index, int slot_count) {
+void clear_weapon_slots(int *row, int start_index, int slot_count) {
     for (int i = 0; i < slot_count; ++i) {
         row[start_index + i] = 0;
     }
 }
 
-static bool find_oldest_weapon_block(int player_id, int *weapon_id, int *start_index, int *slot_count) {
+bool find_oldest_weapon_block(int player_id, int *weapon_id, int *start_index, int *slot_count) {
     for (int i = 0; i < game_state::inventory_slots; ++i) {
         int value = shared_state->player_primary_inventory[player_id][i];
         if (value == 0) {
@@ -359,7 +361,7 @@ static bool find_oldest_weapon_block(int player_id, int *weapon_id, int *start_i
     return false;
 }
 
-static bool move_weapon_to_long_term(int player_id, int weapon_id, int slot_count) {
+bool move_weapon_to_long_term(int player_id, int weapon_id, int slot_count) {
     int target_index = find_contiguous_empty_slots(
         shared_state->long_term_storage[player_id],
         game_state::inventory_slots,
@@ -372,7 +374,7 @@ static bool move_weapon_to_long_term(int player_id, int weapon_id, int slot_coun
     return true;
 }
 
-static bool swap_to_long_term(int player_id) {
+bool swap_to_long_term(int player_id) {
     int weapon_id = 0;
     int start_index = 0;
     int slot_count = 0;
@@ -384,7 +386,7 @@ static bool swap_to_long_term(int player_id) {
     }
     clear_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, slot_count);
     swap_happened_last = true;
-    std::snprintf(
+    snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
         "swapped [%s] to storage",
@@ -393,7 +395,7 @@ static bool swap_to_long_term(int player_id) {
     return true;
 }
 
-static bool allocate_inventory_recursive(int player_id, int weapon_id) {
+bool allocate_inventory_recursive(int player_id, int weapon_id) {
     if (player_id < 0 || player_id >= game_state::max_players) {
         return false;
     }
@@ -416,14 +418,14 @@ static bool allocate_inventory_recursive(int player_id, int weapon_id) {
     return allocate_inventory_recursive(player_id, weapon_id);
 }
 
-static bool allocate_inventory(int player_id, int weapon_id) {
+bool allocate_inventory(int player_id, int weapon_id) {
     swap_happened_last = false;
     return allocate_inventory_recursive(player_id, weapon_id);
 }
 
-static void write_pickup_log(int player_id, int weapon_id, bool success) {
+void write_pickup_log(int player_id, int weapon_id, bool success) {
     if (success) {
-        std::snprintf(
+        snprintf(
             shared_state->action_log,
             sizeof(shared_state->action_log),
             "player %d picked weapon %d",
@@ -431,7 +433,7 @@ static void write_pickup_log(int player_id, int weapon_id, bool success) {
             weapon_id
         );
     } else {
-        std::snprintf(
+        snprintf(
             shared_state->action_log,
             sizeof(shared_state->action_log),
             "player %d failed pickup weapon %d",
@@ -441,7 +443,7 @@ static void write_pickup_log(int player_id, int weapon_id, bool success) {
     }
 }
 
-static void apply_strike_locked(int player_id) {
+void apply_strike_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
     int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
@@ -453,7 +455,7 @@ static void apply_strike_locked(int player_id) {
     shared_state->player_stamina[player_id] = 0;
 }
 
-static void apply_exhaust_locked(int player_id) {
+void apply_exhaust_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
     int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
@@ -465,17 +467,17 @@ static void apply_exhaust_locked(int player_id) {
     shared_state->player_stamina[player_id] = 0;
 }
 
-static void apply_heal_locked(int player_id) {
+void apply_heal_locked(int player_id) {
     int next_hp = shared_state->player_hp[player_id] + player_heal_amount;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, player_max_hp);
     shared_state->player_stamina[player_id] = 0;
 }
 
-static void apply_skip_locked(int player_id) {
+void apply_skip_locked(int player_id) {
     shared_state->player_stamina[player_id] = player_skip_stamina;
 }
 
-static void apply_pickup_drop_locked(int player_id) {
+void apply_pickup_drop_locked(int player_id) {
     int dropped_weapon = shared_state->current_dropped_weapon;
     bool success = allocate_inventory(player_id, dropped_weapon);
     shared_state->current_dropped_weapon = 0;
@@ -485,7 +487,7 @@ static void apply_pickup_drop_locked(int player_id) {
     }
 }
 
-static bool player_has_artifact_locked(int player_id, int artifact_id) {
+bool player_has_artifact_locked(int player_id, int artifact_id) {
     for (int i = 0; i < game_state::inventory_slots; ++i) {
         if (shared_state->player_primary_inventory[player_id][i] == artifact_id) {
             return true;
@@ -494,11 +496,11 @@ static bool player_has_artifact_locked(int player_id, int artifact_id) {
     return false;
 }
 
-static void apply_ultimate_locked(int player_id) {
+void apply_ultimate_locked(int player_id) {
     bool has_solar = player_has_artifact_locked(player_id, solar_core_inventory_id);
     bool has_lunar = player_has_artifact_locked(player_id, lunar_blade_inventory_id);
     if (!has_solar || !has_lunar) {
-        std::snprintf(
+        snprintf(
             shared_state->action_log,
             sizeof(shared_state->action_log),
             "player %d ultimate failed: missing artifacts",
@@ -509,7 +511,7 @@ static void apply_ultimate_locked(int player_id) {
     pid_t asp_pid = shared_state->asp_pid;
     pid_t arbiter_pid = shared_state->arbiter_pid;
     if (asp_pid <= 0 || arbiter_pid <= 0) {
-        std::snprintf(
+        snprintf(
             shared_state->action_log,
             sizeof(shared_state->action_log),
             "player %d ultimate failed: process pids missing",
@@ -522,7 +524,7 @@ static void apply_ultimate_locked(int player_id) {
     shared_state->player_stamina[player_id] = 0;
 }
 
-static void apply_stun_attack_locked(int player_id) {
+void apply_stun_attack_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
     int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
@@ -531,9 +533,9 @@ static void apply_stun_attack_locked(int player_id) {
     }
     int next_hp = shared_state->enemy_hp[target_enemy] - player_stun_damage;
     shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
-    shared_state->stun_end_time[target_enemy] = std::time(nullptr) + stun_duration_seconds;
+    shared_state->stun_end_time[target_enemy] = time(nullptr) + stun_duration_seconds;
     shared_state->player_stamina[player_id] = 0;
-    std::snprintf(
+    snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
         "player %d stun hit enemy %d for 15",
@@ -542,7 +544,7 @@ static void apply_stun_attack_locked(int player_id) {
     );
 }
 
-static void handle_player_action(int key) {
+void handle_player_action(int key) {
     if (!lock_memory()) {
         return;
     }
@@ -569,8 +571,8 @@ static void handle_player_action(int key) {
     unlock_memory();
 }
 
-static int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
-    time_t now = std::time(nullptr);
+int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
+    time_t now = time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
         bool stunned = now < snapshot->player_stun_end_time[i];
         if (!stunned && snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
@@ -580,7 +582,7 @@ static int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
     return -1;
 }
 
-static void destroy_window(WINDOW **target) {
+void destroy_window(WINDOW **target) {
     if (*target == nullptr) {
         return;
     }
@@ -588,7 +590,7 @@ static void destroy_window(WINDOW **target) {
     *target = nullptr;
 }
 
-static void destroy_windows() {
+void destroy_windows() {
     destroy_window(&windows.status);
     destroy_window(&windows.players);
     destroy_window(&windows.enemies);
@@ -596,7 +598,7 @@ static void destroy_windows() {
     destroy_window(&windows.action_log);
 }
 
-static bool create_windows_for_size(int rows, int cols) {
+bool create_windows_for_size(int rows, int cols) {
     int status_h = 5;
     int mid_h = (rows - status_h) / 2;
     if (mid_h < 8) {
@@ -631,7 +633,7 @@ static bool create_windows_for_size(int rows, int cols) {
     return true;
 }
 
-static bool ensure_windows() {
+bool ensure_windows() {
     int rows = 0;
     int cols = 0;
     getmaxyx(stdscr, rows, cols);
@@ -648,7 +650,7 @@ static bool ensure_windows() {
     return create_windows_for_size(rows, cols);
 }
 
-static bool init_ncurses_ui() {
+bool init_ncurses_ui() {
     initscr();
     cbreak();
     noecho();
@@ -677,7 +679,7 @@ static bool init_ncurses_ui() {
     return true;
 }
 
-static void shutdown_ncurses_ui() {
+void shutdown_ncurses_ui() {
     pthread_mutex_lock(&ncurses_lock);
     if (!ncurses_ready) {
         pthread_mutex_unlock(&ncurses_lock);
@@ -689,14 +691,14 @@ static void shutdown_ncurses_ui() {
     pthread_mutex_unlock(&ncurses_lock);
 }
 
-static bool ui_is_ready() {
+bool ui_is_ready() {
     pthread_mutex_lock(&ncurses_lock);
     bool ready = ncurses_ready;
     pthread_mutex_unlock(&ncurses_lock);
     return ready;
 }
 
-static void draw_bar(char *output, int output_size, int current_value, int max_value, int width) {
+void draw_bar(char *output, int output_size, int current_value, int max_value, int width) {
     if (output == nullptr || output_size < 4) {
         return;
     }
@@ -726,7 +728,7 @@ static void draw_bar(char *output, int output_size, int current_value, int max_v
     output[2 + usable_width] = '\0';
 }
 
-static void draw_window_frame(WINDOW *target, const char *title) {
+void draw_window_frame(WINDOW *target, const char *title) {
     wattron(target, COLOR_PAIR(color_border));
     box(target, 0, 0);
     wattroff(target, COLOR_PAIR(color_border));
@@ -735,7 +737,7 @@ static void draw_window_frame(WINDOW *target, const char *title) {
     wattroff(target, COLOR_PAIR(color_border) | A_BOLD);
 }
 
-static void draw_stat_line(
+void draw_stat_line(
     WINDOW *target, int row, const char *label, int value, int max_value, int bar_width, int color_pair_id
 ) {
     int w = getmaxx(target);
@@ -757,10 +759,10 @@ static void draw_stat_line(
     wattroff(target, COLOR_PAIR(color_pair_id));
 }
 
-static void draw_system_status(const hip_snapshot *snapshot, unsigned long frame_id) {
+void draw_system_status(const hip_snapshot *snapshot, unsigned long frame_id) {
     werase(windows.status);
     draw_window_frame(windows.status, "system status");
-    std::time_t now = std::time(nullptr);
+    time_t now = time(nullptr);
     mvwprintw(windows.status, 1, 2, "frame %lu", frame_id);
     mvwprintw(windows.status, 1, 20, "target fps 60");
     mvwprintw(windows.status, 1, 38, "time %ld", static_cast<long>(now));
@@ -773,17 +775,17 @@ static void draw_system_status(const hip_snapshot *snapshot, unsigned long frame
     mvwprintw(windows.status, 3, 2, "press q to exit hip");
 }
 
-static void draw_players(const hip_snapshot *snapshot) {
+void draw_players(const hip_snapshot *snapshot) {
     werase(windows.players);
     draw_window_frame(windows.players, "player squad");
-    time_t now = std::time(nullptr);
+    time_t now = time(nullptr);
     int w = getmaxx(windows.players);
     int row = 1;
     for (int i = 0; i < game_state::max_players; ++i) {
         char hp_label[32];
         char stamina_label[32];
-        std::snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
-        std::snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
+        snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
+        snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
         int hp_row = row++;
         draw_stat_line(windows.players, hp_row, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp);
         if (now < snapshot->player_stun_end_time[i]) {
@@ -795,10 +797,10 @@ static void draw_players(const hip_snapshot *snapshot) {
     }
 }
 
-static void draw_enemies(const hip_snapshot *snapshot) {
+void draw_enemies(const hip_snapshot *snapshot) {
     werase(windows.enemies);
     draw_window_frame(windows.enemies, "enemy bots");
-    time_t now = std::time(nullptr);
+    time_t now = time(nullptr);
     int h = 0;
     int w = 0;
     getmaxyx(windows.enemies, h, w);
@@ -822,7 +824,7 @@ static void draw_enemies(const hip_snapshot *snapshot) {
         mvwprintw(windows.enemies, row, 6, "h%s", hp_bar);
         wattroff(windows.enemies, COLOR_PAIR(color_enemy_hp));
         wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina));
-        mvwprintw(windows.enemies, row, 8 + static_cast<int>(std::strlen(hp_bar)), "s%s", st_bar);
+        mvwprintw(windows.enemies, row, 8 + static_cast<int>(strlen(hp_bar)), "s%s", st_bar);
         wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina));
         if (now < snapshot->stun_end_time[i]) {
             mvwprintw(windows.enemies, row, w - 11, "[STUNNED]");
@@ -831,7 +833,7 @@ static void draw_enemies(const hip_snapshot *snapshot) {
     }
 }
 
-static int find_inventory_player(const hip_snapshot *snapshot) {
+int find_inventory_player(const hip_snapshot *snapshot) {
     for (int i = 0; i < game_state::max_players; ++i) {
         for (int j = 0; j < game_state::inventory_slots; ++j) {
             if (snapshot->player_primary_inventory[i][j] != 0) {
@@ -851,7 +853,7 @@ static int find_inventory_player(const hip_snapshot *snapshot) {
     return 0;
 }
 
-static void draw_inventory_grid(
+void draw_inventory_grid(
     WINDOW *target, int start_row, int start_col, const int *slots, int row_count, int col_count, int col_width
 ) {
     int h = getmaxy(target);
@@ -874,7 +876,7 @@ static void draw_inventory_grid(
     }
 }
 
-static void draw_inventory(const hip_snapshot *snapshot) {
+void draw_inventory(const hip_snapshot *snapshot) {
     werase(windows.inventory);
     box(windows.inventory, 0, 0);
     draw_window_frame(windows.inventory, "inventory tetris");
@@ -913,7 +915,7 @@ static void draw_inventory(const hip_snapshot *snapshot) {
     }
 }
 
-static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
+void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
     werase(windows.action_log);
     draw_window_frame(windows.action_log, "combat action log");
     mvwprintw(windows.action_log, 1, 2, "frame pulse %lu", frame_id);
@@ -947,7 +949,7 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
     mvwprintw(windows.action_log, 14, 2, "input: q quits hip");
 }
 
-static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
+void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
     pthread_mutex_lock(&ncurses_lock);
     if (!ncurses_ready) {
         pthread_mutex_unlock(&ncurses_lock);
@@ -972,7 +974,7 @@ static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
     pthread_mutex_unlock(&ncurses_lock);
 }
 
-static void *render_loop(void *) {
+void *render_loop(void *) {
     if (!init_ncurses_ui()) {
         running = 0;
         return nullptr;
@@ -994,7 +996,7 @@ static void *render_loop(void *) {
     return nullptr;
 }
 
-static void *player_input_loop(void *) {
+void *player_input_loop(void *) {
     while (running) {
         if (!ui_is_ready()) {
             usleep(10000);
@@ -1019,56 +1021,56 @@ static void *player_input_loop(void *) {
     return nullptr;
 }
 
-static void handle_signal(int) {
+void handle_signal(int) {
     running = 0;
 }
 
-static bool register_signals() {
-    if (std::signal(SIGINT, handle_signal) == SIG_ERR) {
-        std::fprintf(stderr, "failed to register sigint handler\n");
+bool register_signals() {
+    if (signal(SIGINT, handle_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigint handler\n");
         return false;
     }
-    if (std::signal(SIGTERM, handle_signal) == SIG_ERR) {
-        std::fprintf(stderr, "failed to register sigterm handler\n");
+    if (signal(SIGTERM, handle_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigterm handler\n");
         return false;
     }
     return true;
 }
 
-static bool start_render_thread() {
+bool start_render_thread() {
     if (pthread_create(&render_thread, nullptr, render_loop, nullptr) != 0) {
         print_errno("pthread_create failed");
         return false;
     }
-    std::printf("ui thread started\n");
+    printf("ui thread started\n");
     return true;
 }
 
-static bool start_input_thread() {
+bool start_input_thread() {
     if (pthread_create(&input_thread, nullptr, player_input_loop, nullptr) != 0) {
         print_errno("pthread_create failed");
         return false;
     }
-    std::printf("input thread started\n");
+    printf("input thread started\n");
     return true;
 }
 
-static void join_render_thread() {
+void join_render_thread() {
     pthread_join(render_thread, nullptr);
 }
 
-static void join_input_thread() {
+void join_input_thread() {
     pthread_join(input_thread, nullptr);
 }
 
-static void cleanup() {
+void cleanup() {
     shutdown_ncurses_ui();
     unmap_shared_memory();
     close_shared_memory_fd();
 }
 
 int main() {
-    std::srand(static_cast<unsigned int>(std::time(nullptr)) ^ static_cast<unsigned int>(getpid()));
+    srand(static_cast<unsigned int>(time(nullptr)) ^ static_cast<unsigned int>(getpid()));
     if (!register_signals()) {
         return 1;
     }
@@ -1092,6 +1094,6 @@ int main() {
     join_render_thread();
     join_input_thread();
     cleanup();
-    std::printf("hip exited cleanly\n");
+    printf("hip exited cleanly\n");
     return 0;
 }
