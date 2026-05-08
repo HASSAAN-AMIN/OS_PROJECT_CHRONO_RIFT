@@ -116,6 +116,7 @@ static void clear_state() {
         shared_state->player_hp[i] = 0;
         shared_state->player_speed[i] = 0;
         shared_state->player_stamina[i] = 0;
+        shared_state->player_stun_end_time[i] = 0;
         for (int j = 0; j < game_state::inventory_slots; ++j) {
             shared_state->player_primary_inventory[i][j] = 0;
             shared_state->long_term_storage[i][j] = 0;
@@ -125,6 +126,7 @@ static void clear_state() {
         shared_state->enemy_hp[i] = 0;
         shared_state->enemy_speed[i] = 0;
         shared_state->enemy_stamina[i] = 0;
+        shared_state->stun_end_time[i] = 0;
     }
     shared_state->eclipse_relic_holder = 0;
     shared_state->solar_core_holder = -1;

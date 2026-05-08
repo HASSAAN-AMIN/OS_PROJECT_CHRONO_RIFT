@@ -35,13 +35,17 @@ static const int player_heal_amount = 178;
 static const int player_max_hp = 1780;
 static const int solar_core_inventory_id = 10;
 static const int lunar_blade_inventory_id = 11;
+static const int player_stun_damage = 15;
+static const int stun_duration_seconds = 3;
 static bool swap_happened_last = false;
 
 struct hip_snapshot {
     int player_hp[game_state::max_players];
     int player_stamina[game_state::max_players];
+    time_t player_stun_end_time[game_state::max_players];
     int enemy_hp[game_state::max_enemies];
     int enemy_stamina[game_state::max_enemies];
+    time_t stun_end_time[game_state::max_enemies];
     int player_primary_inventory[game_state::max_players][game_state::inventory_slots];
     int long_term_storage[game_state::max_players][game_state::inventory_slots];
     int solar_core_holder;
@@ -162,6 +166,7 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
     for (int i = 0; i < game_state::max_players; ++i) {
         snapshot->player_hp[i] = shared_state->player_hp[i];
         snapshot->player_stamina[i] = shared_state->player_stamina[i];
+        snapshot->player_stun_end_time[i] = shared_state->player_stun_end_time[i];
         for (int j = 0; j < game_state::inventory_slots; ++j) {
             snapshot->player_primary_inventory[i][j] = shared_state->player_primary_inventory[i][j];
             snapshot->long_term_storage[i][j] = shared_state->long_term_storage[i][j];
@@ -170,6 +175,7 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
     for (int i = 0; i < game_state::max_enemies; ++i) {
         snapshot->enemy_hp[i] = shared_state->enemy_hp[i];
         snapshot->enemy_stamina[i] = shared_state->enemy_stamina[i];
+        snapshot->stun_end_time[i] = shared_state->stun_end_time[i];
     }
     snapshot->solar_core_holder = shared_state->solar_core_holder;
     snapshot->lunar_blade_holder = shared_state->lunar_blade_holder;
@@ -183,8 +189,10 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
 }
 
 static int find_turn_player_locked() {
+    time_t now = std::time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
-        if (shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
+        bool stunned = now < shared_state->player_stun_end_time[i];
+        if (!stunned && shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
             return i;
         }
     }
@@ -514,6 +522,26 @@ static void apply_ultimate_locked(int player_id) {
     shared_state->player_stamina[player_id] = 0;
 }
 
+static void apply_stun_attack_locked(int player_id) {
+    int enemy_indices[game_state::max_enemies];
+    int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
+    int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
+    if (target_enemy < 0) {
+        return;
+    }
+    int next_hp = shared_state->enemy_hp[target_enemy] - player_stun_damage;
+    shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
+    shared_state->stun_end_time[target_enemy] = std::time(nullptr) + stun_duration_seconds;
+    shared_state->player_stamina[player_id] = 0;
+    std::snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "player %d stun hit enemy %d for 15",
+        player_id + 1,
+        target_enemy + 1
+    );
+}
+
 static void handle_player_action(int key) {
     if (!lock_memory()) {
         return;
@@ -535,13 +563,17 @@ static void handle_player_action(int key) {
         apply_pickup_drop_locked(active_player);
     } else if (key == '6') {
         apply_ultimate_locked(active_player);
+    } else if (key == '7') {
+        apply_stun_attack_locked(active_player);
     }
     unlock_memory();
 }
 
 static int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
+    time_t now = std::time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
-        if (snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
+        bool stunned = now < snapshot->player_stun_end_time[i];
+        if (!stunned && snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
             return i;
         }
     }
@@ -744,15 +776,19 @@ static void draw_system_status(const hip_snapshot *snapshot, unsigned long frame
 static void draw_players(const hip_snapshot *snapshot) {
     werase(windows.players);
     draw_window_frame(windows.players, "player squad");
+    time_t now = std::time(nullptr);
+    int w = getmaxx(windows.players);
     int row = 1;
     for (int i = 0; i < game_state::max_players; ++i) {
         char hp_label[32];
         char stamina_label[32];
         std::snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
         std::snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
-        draw_stat_line(
-            windows.players, row++, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp
-        );
+        int hp_row = row++;
+        draw_stat_line(windows.players, hp_row, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp);
+        if (now < snapshot->player_stun_end_time[i]) {
+            mvwprintw(windows.players, hp_row, w - 11, "[STUNNED]");
+        }
         draw_stat_line(
             windows.players, row++, stamina_label, snapshot->player_stamina[i], max_stat_value, 18, color_player_stamina
         );
@@ -762,6 +798,7 @@ static void draw_players(const hip_snapshot *snapshot) {
 static void draw_enemies(const hip_snapshot *snapshot) {
     werase(windows.enemies);
     draw_window_frame(windows.enemies, "enemy bots");
+    time_t now = std::time(nullptr);
     int h = 0;
     int w = 0;
     getmaxyx(windows.enemies, h, w);
@@ -787,6 +824,9 @@ static void draw_enemies(const hip_snapshot *snapshot) {
         wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina));
         mvwprintw(windows.enemies, row, 8 + static_cast<int>(std::strlen(hp_bar)), "s%s", st_bar);
         wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina));
+        if (now < snapshot->stun_end_time[i]) {
+            mvwprintw(windows.enemies, row, w - 11, "[STUNNED]");
+        }
         row++;
     }
 }
@@ -896,13 +936,15 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
         );
         mvwprintw(windows.action_log, 10, 2, "pickup: 5)pick up drop");
         mvwprintw(windows.action_log, 11, 2, "ultimate: 6)freeze bots");
+        mvwprintw(windows.action_log, 12, 2, "stun: 7)stun attack");
     } else {
         mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
         mvwprintw(windows.action_log, 10, 2, "pickup: ready on turn only");
         mvwprintw(windows.action_log, 11, 2, "ultimate: ready on turn only");
+        mvwprintw(windows.action_log, 12, 2, "stun: ready on turn only");
     }
-    mvwprintw(windows.action_log, 12, 2, "drop id: %d", snapshot->current_dropped_weapon);
-    mvwprintw(windows.action_log, 13, 2, "input: q quits hip");
+    mvwprintw(windows.action_log, 13, 2, "drop id: %d", snapshot->current_dropped_weapon);
+    mvwprintw(windows.action_log, 14, 2, "input: q quits hip");
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -969,7 +1011,7 @@ static void *player_input_loop(void *) {
             shutdown_ncurses_ui();
             break;
         }
-        if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5' || key == '6') {
+        if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5' || key == '6' || key == '7') {
             handle_player_action(key);
         }
         usleep(10000);

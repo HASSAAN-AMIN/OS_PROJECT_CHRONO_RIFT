@@ -16,6 +16,8 @@
 static const char *shared_memory_name = "/chrono_rift_game_state";
 static const int enemy_attack_cost = 150;
 static const int enemy_attack_damage = 18;
+static const int enemy_stun_chance_percent = 20;
+static const int stun_duration_seconds = 3;
 static const useconds_t idle_sleep_us = 50000;
 
 static int shared_memory_fd = -1;
@@ -122,6 +124,11 @@ static int find_living_player() {
     return -1;
 }
 
+static bool enemy_is_stunned_locked(int enemy_id) {
+    time_t now = std::time(nullptr);
+    return now < shared_state->stun_end_time[enemy_id];
+}
+
 static void write_attack_log(int enemy_id, int player_id) {
     std::snprintf(
         shared_state->action_log,
@@ -132,11 +139,31 @@ static void write_attack_log(int enemy_id, int player_id) {
     );
 }
 
+static void write_enemy_stun_log(int enemy_id, int player_id) {
+    std::snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "enemy %d stunned player %d for 3s",
+        enemy_id + 1,
+        player_id + 1
+    );
+}
+
 static void perform_enemy_attack(int enemy_id, int player_id) {
     int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->enemy_stamina[enemy_id] = 0;
     write_attack_log(enemy_id, player_id);
+}
+
+static void perform_enemy_stun_attack(int enemy_id, int player_id) {
+    shared_state->player_stun_end_time[player_id] = std::time(nullptr) + stun_duration_seconds;
+    shared_state->enemy_stamina[enemy_id] = 0;
+    write_enemy_stun_log(enemy_id, player_id);
+}
+
+static bool should_use_stun_attack() {
+    return (std::rand() % 100) < enemy_stun_chance_percent;
 }
 
 static void run_enemy_step_locked(int enemy_id) {
@@ -153,14 +180,20 @@ static void run_enemy_step_locked(int enemy_id) {
     if (player_id < 0) {
         return;
     }
-    perform_enemy_attack(enemy_id, player_id);
+    if (should_use_stun_attack()) {
+        perform_enemy_stun_attack(enemy_id, player_id);
+    } else {
+        perform_enemy_attack(enemy_id, player_id);
+    }
 }
 
 static void *npc_logic_loop(void *arg) {
     int enemy_id = *static_cast<int *>(arg);
     while (running) {
         if (lock_state()) {
-            run_enemy_step_locked(enemy_id);
+            if (!enemy_is_stunned_locked(enemy_id)) {
+                run_enemy_step_locked(enemy_id);
+            }
             unlock_state();
         }
         usleep(idle_sleep_us);

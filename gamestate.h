@@ -1,6 +1,7 @@
 #ifndef gamestate_h
 #define gamestate_h
 
+#include <ctime>
 #include <sys/types.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -24,10 +25,12 @@ struct game_state {
     int player_hp[max_players];
     int player_speed[max_players];
     int player_stamina[max_players];
+    time_t player_stun_end_time[max_players];
 
     int enemy_hp[max_enemies];
     int enemy_speed[max_enemies];
     int enemy_stamina[max_enemies];
+    time_t stun_end_time[max_enemies];
 
     int player_primary_inventory[max_players][inventory_slots];
     int long_term_storage[max_players][inventory_slots];
