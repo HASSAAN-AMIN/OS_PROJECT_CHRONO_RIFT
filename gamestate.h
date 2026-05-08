@@ -7,6 +7,17 @@ struct game_state {
     static constexpr int max_players = 4;
     static constexpr int max_enemies = 9;
     static constexpr int inventory_slots = 20;
+    static constexpr int weapon_none = 0;
+    static constexpr int splinter_stick_id = 1;
+    static constexpr int venom_dagger_id = 2;
+    static constexpr int iron_halberd_id = 3;
+    static constexpr int solar_core_id = 4;
+    static constexpr int lunar_blade_id = 5;
+    static constexpr int splinter_stick = 2;
+    static constexpr int venom_dagger = 4;
+    static constexpr int iron_halberd = 7;
+    static constexpr int solar_core = 10;
+    static constexpr int lunar_blade = 10;
 
     int player_hp[max_players];
     int player_speed[max_players];
@@ -22,6 +33,7 @@ struct game_state {
     int solar_core_holder;
     int lunar_blade_holder;
     int eclipse_relic_holder;
+    int current_dropped_weapon = 0;
     int active_player_count;
     int active_enemy_count;
     char action_log[256];

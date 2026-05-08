@@ -41,6 +41,7 @@ struct hip_snapshot {
     int solar_core_holder;
     int lunar_blade_holder;
     int eclipse_relic_holder;
+    int current_dropped_weapon;
     char action_log[256];
 };
 
@@ -167,6 +168,7 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
     snapshot->solar_core_holder = shared_state->solar_core_holder;
     snapshot->lunar_blade_holder = shared_state->lunar_blade_holder;
     snapshot->eclipse_relic_holder = shared_state->eclipse_relic_holder;
+    snapshot->current_dropped_weapon = shared_state->current_dropped_weapon;
     std::snprintf(snapshot->action_log, sizeof(snapshot->action_log), "%s", shared_state->action_log);
     if (!unlock_memory()) {
         return false;
@@ -199,6 +201,136 @@ static int pick_random_enemy_locked(int *enemy_indices, int enemy_count) {
     }
     int random_index = std::rand() % enemy_count;
     return enemy_indices[random_index];
+}
+
+static int weapon_size_from_id(int weapon_id) {
+    if (weapon_id == game_state::splinter_stick_id) {
+        return game_state::splinter_stick;
+    }
+    if (weapon_id == game_state::venom_dagger_id) {
+        return game_state::venom_dagger;
+    }
+    if (weapon_id == game_state::iron_halberd_id) {
+        return game_state::iron_halberd;
+    }
+    if (weapon_id == game_state::solar_core_id) {
+        return game_state::solar_core;
+    }
+    if (weapon_id == game_state::lunar_blade_id) {
+        return game_state::lunar_blade;
+    }
+    return 0;
+}
+
+static int find_contiguous_empty_slots(const int *row, int slot_count, int required_slots) {
+    int run = 0;
+    for (int i = 0; i < slot_count; ++i) {
+        if (row[i] == 0) {
+            run++;
+            if (run >= required_slots) {
+                return i - required_slots + 1;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    return -1;
+}
+
+static void write_weapon_slots(int *row, int start_index, int slot_count, int weapon_id) {
+    for (int i = 0; i < slot_count; ++i) {
+        row[start_index + i] = weapon_id;
+    }
+}
+
+static bool find_oldest_weapon_block(int player_id, int *weapon_id, int *start_index, int *slot_count) {
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        int value = shared_state->player_primary_inventory[player_id][i];
+        if (value == 0) {
+            continue;
+        }
+        int run = 1;
+        int j = i + 1;
+        while (j < game_state::inventory_slots && shared_state->player_primary_inventory[player_id][j] == value) {
+            run++;
+            j++;
+        }
+        *weapon_id = value;
+        *start_index = i;
+        *slot_count = run;
+        return true;
+    }
+    return false;
+}
+
+static bool move_weapon_to_long_term(int player_id, int weapon_id, int slot_count) {
+    int target_index = find_contiguous_empty_slots(
+        shared_state->long_term_storage[player_id],
+        game_state::inventory_slots,
+        slot_count
+    );
+    if (target_index < 0) {
+        return false;
+    }
+    write_weapon_slots(shared_state->long_term_storage[player_id], target_index, slot_count, weapon_id);
+    return true;
+}
+
+static bool swap_to_long_term(int player_id) {
+    int weapon_id = 0;
+    int start_index = 0;
+    int slot_count = 0;
+    if (!find_oldest_weapon_block(player_id, &weapon_id, &start_index, &slot_count)) {
+        return false;
+    }
+    if (!move_weapon_to_long_term(player_id, weapon_id, slot_count)) {
+        return false;
+    }
+    write_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, slot_count, 0);
+    return true;
+}
+
+static bool allocate_inventory(int player_id, int weapon_id) {
+    if (player_id < 0 || player_id >= game_state::max_players) {
+        return false;
+    }
+    int weapon_size = weapon_size_from_id(weapon_id);
+    if (weapon_size <= 0) {
+        return false;
+    }
+    int start_index = find_contiguous_empty_slots(
+        shared_state->player_primary_inventory[player_id],
+        game_state::inventory_slots,
+        weapon_size
+    );
+    if (start_index >= 0) {
+        write_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, weapon_size, weapon_id);
+        return true;
+    }
+    if (!swap_to_long_term(player_id)) {
+        return false;
+    }
+    return allocate_inventory(player_id, weapon_id);
+}
+
+static void write_pickup_log(int player_id, int weapon_id, bool success) {
+    if (success) {
+        std::snprintf(
+            shared_state->action_log,
+            sizeof(shared_state->action_log),
+            "player %d picked weapon %d",
+            player_id + 1,
+            weapon_id
+        );
+    } else {
+        std::snprintf(
+            shared_state->action_log,
+            sizeof(shared_state->action_log),
+            "player %d failed pickup weapon %d",
+            player_id + 1,
+            weapon_id
+        );
+    }
 }
 
 static void apply_strike_locked(int player_id) {
@@ -235,6 +367,14 @@ static void apply_skip_locked(int player_id) {
     shared_state->player_stamina[player_id] = player_skip_stamina;
 }
 
+static void apply_pickup_drop_locked(int player_id) {
+    int dropped_weapon = shared_state->current_dropped_weapon;
+    bool success = allocate_inventory(player_id, dropped_weapon);
+    shared_state->current_dropped_weapon = 0;
+    shared_state->player_stamina[player_id] = 0;
+    write_pickup_log(player_id, dropped_weapon, success);
+}
+
 static void handle_player_action(int key) {
     if (!lock_memory()) {
         return;
@@ -252,6 +392,8 @@ static void handle_player_action(int key) {
         apply_heal_locked(active_player);
     } else if (key == '4') {
         apply_skip_locked(active_player);
+    } else if (key == '5') {
+        apply_pickup_drop_locked(active_player);
     }
     unlock_memory();
 }
@@ -559,10 +701,13 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
             "player %d turn: 1)strike 2)exhaust 3)heal 4)skip",
             turn_player + 1
         );
+        mvwprintw(windows.action_log, 10, 2, "pickup: 5)pick up drop");
     } else {
         mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
+        mvwprintw(windows.action_log, 10, 2, "pickup: ready on turn only");
     }
-    mvwprintw(windows.action_log, 11, 2, "input: q quits hip");
+    mvwprintw(windows.action_log, 11, 2, "drop id: %d", snapshot->current_dropped_weapon);
+    mvwprintw(windows.action_log, 12, 2, "input: q quits hip");
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -629,7 +774,7 @@ static void *player_input_loop(void *) {
             shutdown_ncurses_ui();
             break;
         }
-        if (key == '1' || key == '2' || key == '3' || key == '4') {
+        if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5') {
             handle_player_action(key);
         }
         usleep(10000);
