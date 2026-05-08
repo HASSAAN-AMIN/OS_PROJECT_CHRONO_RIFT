@@ -1,6 +1,7 @@
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -22,6 +23,13 @@ static const int color_player_stamina = 3;
 static const int color_enemy_hp = 4;
 static const int color_enemy_stamina = 5;
 static const int color_artifact = 6;
+static const int player_turn_stamina = 100;
+static const int enemy_turn_stamina = 150;
+static const int player_base_damage = 10;
+static const int player_exhaust_damage = 10;
+static const int player_skip_stamina = 50;
+static const int player_heal_amount = 178;
+static const int player_max_hp = 1780;
 
 struct hip_snapshot {
     int player_hp[game_state::max_players];
@@ -112,7 +120,7 @@ static bool lock_memory() {
     if (shared_state == nullptr) {
         return false;
     }
-    while (sem_wait(&shared_state->memory_sem) != 0) {
+    while (sem_wait(&shared_state->state_lock) != 0) {
         if (errno == EINTR) {
             if (!running) {
                 return false;
@@ -129,7 +137,7 @@ static bool unlock_memory() {
     if (shared_state == nullptr) {
         return false;
     }
-    if (sem_post(&shared_state->memory_sem) != 0) {
+    if (sem_post(&shared_state->state_lock) != 0) {
         print_errno("sem_post failed");
         return false;
     }
@@ -162,6 +170,97 @@ static bool copy_snapshot(hip_snapshot *snapshot) {
         return false;
     }
     return true;
+}
+
+static int find_turn_player_locked() {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static int collect_living_enemies_locked(int *enemy_indices, int capacity) {
+    int count = 0;
+    for (int i = 0; i < game_state::max_enemies && count < capacity; ++i) {
+        if (shared_state->enemy_hp[i] > 0) {
+            enemy_indices[count++] = i;
+        }
+    }
+    return count;
+}
+
+static int pick_random_enemy_locked(int *enemy_indices, int enemy_count) {
+    if (enemy_count <= 0) {
+        return -1;
+    }
+    int random_index = std::rand() % enemy_count;
+    return enemy_indices[random_index];
+}
+
+static void apply_strike_locked(int player_id) {
+    int enemy_indices[game_state::max_enemies];
+    int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
+    int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
+    if (target_enemy < 0) {
+        return;
+    }
+    int next_hp = shared_state->enemy_hp[target_enemy] - player_base_damage;
+    shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
+    shared_state->player_stamina[player_id] = 0;
+}
+
+static void apply_exhaust_locked(int player_id) {
+    int enemy_indices[game_state::max_enemies];
+    int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
+    int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
+    if (target_enemy < 0) {
+        return;
+    }
+    int next_stamina = shared_state->enemy_stamina[target_enemy] - player_exhaust_damage;
+    shared_state->enemy_stamina[target_enemy] = clamp_value(next_stamina, 0, enemy_turn_stamina);
+    shared_state->player_stamina[player_id] = 0;
+}
+
+static void apply_heal_locked(int player_id) {
+    int next_hp = shared_state->player_hp[player_id] + player_heal_amount;
+    shared_state->player_hp[player_id] = clamp_value(next_hp, 0, player_max_hp);
+    shared_state->player_stamina[player_id] = 0;
+}
+
+static void apply_skip_locked(int player_id) {
+    shared_state->player_stamina[player_id] = player_skip_stamina;
+}
+
+static void handle_player_action(int key) {
+    if (!lock_memory()) {
+        return;
+    }
+    int active_player = find_turn_player_locked();
+    if (active_player < 0) {
+        unlock_memory();
+        return;
+    }
+    if (key == '1') {
+        apply_strike_locked(active_player);
+    } else if (key == '2') {
+        apply_exhaust_locked(active_player);
+    } else if (key == '3') {
+        apply_heal_locked(active_player);
+    } else if (key == '4') {
+        apply_skip_locked(active_player);
+    }
+    unlock_memory();
+}
+
+static int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 static void destroy_window(WINDOW **target) {
@@ -448,7 +547,19 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
     wattroff(windows.action_log, COLOR_PAIR(color_artifact) | A_BOLD);
     mvwprintw(windows.action_log, 6, 2, "squad ready: %d/%d", game_state::max_players, game_state::max_players);
     mvwprintw(windows.action_log, 7, 2, "enemy active: %d", game_state::max_enemies);
-    mvwprintw(windows.action_log, 9, 2, "input: q quits hip");
+    int turn_player = find_turn_player_from_snapshot(snapshot);
+    if (turn_player >= 0) {
+        mvwprintw(
+            windows.action_log,
+            9,
+            2,
+            "player %d turn: 1)strike 2)exhaust 3)heal 4)skip",
+            turn_player + 1
+        );
+    } else {
+        mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
+    }
+    mvwprintw(windows.action_log, 10, 2, "input: q quits hip");
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -515,6 +626,9 @@ static void *player_input_loop(void *) {
             shutdown_ncurses_ui();
             break;
         }
+        if (key == '1' || key == '2' || key == '3' || key == '4') {
+            handle_player_action(key);
+        }
         usleep(10000);
     }
     return nullptr;
@@ -569,6 +683,7 @@ static void cleanup() {
 }
 
 int main() {
+    std::srand(static_cast<unsigned int>(std::time(nullptr)) ^ static_cast<unsigned int>(getpid()));
     if (!register_signals()) {
         return 1;
     }
