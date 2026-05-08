@@ -134,6 +134,8 @@ static void clear_state() {
     shared_state->current_dropped_weapon = 0;
     shared_state->active_player_count = 0;
     shared_state->active_enemy_count = 0;
+    shared_state->arbiter_pid = 0;
+    shared_state->asp_pid = 0;
     shared_state->action_log[0] = '\0';
 }
 
@@ -256,6 +258,39 @@ static void run_stamina_loop() {
             break;
         }
     }
+}
+
+static void copy_action_log_literal(const char *text) {
+    int i = 0;
+    while (i < 255 && text[i] != '\0') {
+        shared_state->action_log[i] = text[i];
+        i++;
+    }
+    shared_state->action_log[i] = '\0';
+}
+
+static void handle_alarm_signal(int) {
+    pid_t target_pid = shared_state->asp_pid;
+    if (target_pid > 0) {
+        kill(target_pid, SIGCONT);
+    }
+    copy_action_log_literal("ultimate ended, asp resumed");
+}
+
+static void handle_ultimate_signal(int) {
+    alarm(10);
+    copy_action_log_literal("ultimate triggered! asp frozen for 10s");
+}
+
+static bool register_arbiter_pid() {
+    if (!lock_state()) {
+        return false;
+    }
+    shared_state->arbiter_pid = getpid();
+    if (!unlock_state()) {
+        return false;
+    }
+    return true;
 }
 
 static bool is_player_entity(int entity_id) {
@@ -384,7 +419,7 @@ static void cleanup() {
     unlink_shared_memory();
 }
 
-static void handle_signal(int) {
+static void handle_exit_signal(int) {
     std::exit(0);
 }
 
@@ -393,12 +428,20 @@ static bool register_exit_handlers() {
         std::fprintf(stderr, "failed to register cleanup\n");
         return false;
     }
-    if (std::signal(SIGINT, handle_signal) == SIG_ERR) {
+    if (std::signal(SIGINT, handle_exit_signal) == SIG_ERR) {
         std::fprintf(stderr, "failed to register sigint handler\n");
         return false;
     }
-    if (std::signal(SIGTERM, handle_signal) == SIG_ERR) {
+    if (std::signal(SIGTERM, handle_exit_signal) == SIG_ERR) {
         std::fprintf(stderr, "failed to register sigterm handler\n");
+        return false;
+    }
+    if (std::signal(SIGALRM, handle_alarm_signal) == SIG_ERR) {
+        std::fprintf(stderr, "failed to register sigalrm handler\n");
+        return false;
+    }
+    if (std::signal(SIGUSR1, handle_ultimate_signal) == SIG_ERR) {
+        std::fprintf(stderr, "failed to register sigusr1 handler\n");
         return false;
     }
     return true;
@@ -432,6 +475,9 @@ int main() {
         return 1;
     }
     if (!setup_shared_state()) {
+        return 1;
+    }
+    if (!register_arbiter_pid()) {
         return 1;
     }
     if (!start_deadlock_monitor_thread()) {

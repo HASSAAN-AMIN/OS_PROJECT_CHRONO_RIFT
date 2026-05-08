@@ -1,6 +1,7 @@
 #ifndef gamestate_h
 #define gamestate_h
 
+#include <sys/types.h>
 #include <pthread.h>
 #include <semaphore.h>
 
@@ -39,6 +40,8 @@ struct game_state {
     int current_dropped_weapon = 0;
     int active_player_count;
     int active_enemy_count;
+    pid_t arbiter_pid;
+    pid_t asp_pid;
     char action_log[256];
 
     pthread_mutex_t resource_lock;

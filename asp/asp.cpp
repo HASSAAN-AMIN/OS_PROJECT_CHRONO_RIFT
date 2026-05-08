@@ -102,6 +102,17 @@ static bool unlock_state() {
     return true;
 }
 
+static bool register_asp_pid() {
+    if (!lock_state()) {
+        return false;
+    }
+    shared_state->asp_pid = getpid();
+    if (!unlock_state()) {
+        return false;
+    }
+    return true;
+}
+
 static int find_living_player() {
     for (int i = 0; i < game_state::max_players; ++i) {
         if (shared_state->player_hp[i] > 0) {
@@ -208,6 +219,10 @@ int main() {
     }
     if (!map_shared_memory()) {
         close_shared_memory_fd();
+        return 1;
+    }
+    if (!register_asp_pid()) {
+        cleanup();
         return 1;
     }
     if (!start_npc_threads()) {

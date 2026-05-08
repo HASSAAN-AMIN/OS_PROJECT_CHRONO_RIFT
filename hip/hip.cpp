@@ -33,6 +33,8 @@ static const int player_exhaust_damage = 10;
 static const int player_skip_stamina = 50;
 static const int player_heal_amount = 178;
 static const int player_max_hp = 1780;
+static const int solar_core_inventory_id = 10;
+static const int lunar_blade_inventory_id = 11;
 static bool swap_happened_last = false;
 
 struct hip_snapshot {
@@ -475,6 +477,43 @@ static void apply_pickup_drop_locked(int player_id) {
     }
 }
 
+static bool player_has_artifact_locked(int player_id, int artifact_id) {
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        if (shared_state->player_primary_inventory[player_id][i] == artifact_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void apply_ultimate_locked(int player_id) {
+    bool has_solar = player_has_artifact_locked(player_id, solar_core_inventory_id);
+    bool has_lunar = player_has_artifact_locked(player_id, lunar_blade_inventory_id);
+    if (!has_solar || !has_lunar) {
+        std::snprintf(
+            shared_state->action_log,
+            sizeof(shared_state->action_log),
+            "player %d ultimate failed: missing artifacts",
+            player_id + 1
+        );
+        return;
+    }
+    pid_t asp_pid = shared_state->asp_pid;
+    pid_t arbiter_pid = shared_state->arbiter_pid;
+    if (asp_pid <= 0 || arbiter_pid <= 0) {
+        std::snprintf(
+            shared_state->action_log,
+            sizeof(shared_state->action_log),
+            "player %d ultimate failed: process pids missing",
+            player_id + 1
+        );
+        return;
+    }
+    kill(asp_pid, SIGSTOP);
+    kill(arbiter_pid, SIGUSR1);
+    shared_state->player_stamina[player_id] = 0;
+}
+
 static void handle_player_action(int key) {
     if (!lock_memory()) {
         return;
@@ -494,6 +533,8 @@ static void handle_player_action(int key) {
         apply_skip_locked(active_player);
     } else if (key == '5') {
         apply_pickup_drop_locked(active_player);
+    } else if (key == '6') {
+        apply_ultimate_locked(active_player);
     }
     unlock_memory();
 }
@@ -751,6 +792,13 @@ static void draw_enemies(const hip_snapshot *snapshot) {
 }
 
 static int find_inventory_player(const hip_snapshot *snapshot) {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        for (int j = 0; j < game_state::inventory_slots; ++j) {
+            if (snapshot->player_primary_inventory[i][j] != 0) {
+                return i;
+            }
+        }
+    }
     int turn_player = find_turn_player_from_snapshot(snapshot);
     if (turn_player >= 0) {
         return turn_player;
@@ -766,6 +814,7 @@ static int find_inventory_player(const hip_snapshot *snapshot) {
 static void draw_inventory_grid(
     WINDOW *target, int start_row, int start_col, const int *slots, int row_count, int col_count, int col_width
 ) {
+    int h = getmaxy(target);
     for (int row = 0; row < row_count; ++row) {
         for (int col = 0; col < col_count; ++col) {
             int index = row * col_count + col;
@@ -775,6 +824,9 @@ static void draw_inventory_grid(
             int attr = weapon_attr_from_id(weapon_id);
             int y = start_row + row;
             int x = start_col + col * col_width;
+            if (y >= h - 1) {
+                continue;
+            }
             wattron(target, COLOR_PAIR(color_pair) | attr);
             mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
             wattroff(target, COLOR_PAIR(color_pair) | attr);
@@ -787,6 +839,7 @@ static void draw_inventory(const hip_snapshot *snapshot) {
     box(windows.inventory, 0, 0);
     draw_window_frame(windows.inventory, "inventory tetris");
     int active_player = find_inventory_player(snapshot);
+    int h = getmaxy(windows.inventory);
     int w = getmaxx(windows.inventory);
     int row_count = 4;
     int col_count = 5;
@@ -804,16 +857,20 @@ static void draw_inventory(const hip_snapshot *snapshot) {
         col_count,
         col_width
     );
-    mvwprintw(windows.inventory, 8, 2, "storage");
-    draw_inventory_grid(
-        windows.inventory,
-        9,
-        2,
-        snapshot->long_term_storage[active_player],
-        row_count,
-        col_count,
-        col_width
-    );
+    if (h >= 14) {
+        mvwprintw(windows.inventory, 8, 2, "storage");
+        draw_inventory_grid(
+            windows.inventory,
+            9,
+            2,
+            snapshot->long_term_storage[active_player],
+            row_count,
+            col_count,
+            col_width
+        );
+    } else {
+        mvwprintw(windows.inventory, h - 2, 2, "storage hidden: enlarge terminal");
+    }
 }
 
 static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -838,12 +895,14 @@ static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id
             turn_player + 1
         );
         mvwprintw(windows.action_log, 10, 2, "pickup: 5)pick up drop");
+        mvwprintw(windows.action_log, 11, 2, "ultimate: 6)freeze bots");
     } else {
         mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
         mvwprintw(windows.action_log, 10, 2, "pickup: ready on turn only");
+        mvwprintw(windows.action_log, 11, 2, "ultimate: ready on turn only");
     }
-    mvwprintw(windows.action_log, 11, 2, "drop id: %d", snapshot->current_dropped_weapon);
-    mvwprintw(windows.action_log, 12, 2, "input: q quits hip");
+    mvwprintw(windows.action_log, 12, 2, "drop id: %d", snapshot->current_dropped_weapon);
+    mvwprintw(windows.action_log, 13, 2, "input: q quits hip");
 }
 
 static void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -910,7 +969,7 @@ static void *player_input_loop(void *) {
             shutdown_ncurses_ui();
             break;
         }
-        if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5') {
+        if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5' || key == '6') {
             handle_player_action(key);
         }
         usleep(10000);
