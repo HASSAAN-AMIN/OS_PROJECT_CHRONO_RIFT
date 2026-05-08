@@ -23,6 +23,9 @@ static const int color_player_stamina = 3;
 static const int color_enemy_hp = 4;
 static const int color_enemy_stamina = 5;
 static const int color_artifact = 6;
+static const int color_empty_slot = 7;
+static const int color_solar_slot = 8;
+static const int color_lunar_slot = 9;
 static const int player_turn_stamina = 100;
 static const int enemy_turn_stamina = 150;
 static const int player_base_damage = 10;
@@ -30,6 +33,7 @@ static const int player_exhaust_damage = 10;
 static const int player_skip_stamina = 50;
 static const int player_heal_amount = 178;
 static const int player_max_hp = 1780;
+static bool swap_happened_last = false;
 
 struct hip_snapshot {
     int player_hp[game_state::max_players];
@@ -222,6 +226,82 @@ static int weapon_size_from_id(int weapon_id) {
     return 0;
 }
 
+static const char *weapon_name_from_id(int weapon_id) {
+    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+        return "splinter";
+    }
+    if (weapon_id == game_state::venom_dagger_id) {
+        return "venom";
+    }
+    if (weapon_id == game_state::iron_halberd_id) {
+        return "halberd";
+    }
+    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+        return "solar_core";
+    }
+    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+        return "lunar_blnd";
+    }
+    return "unknown";
+}
+
+static const char *weapon_label_from_id(int weapon_id) {
+    if (weapon_id == 0) {
+        return "[ empty  ]";
+    }
+    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+        return "[splinter]";
+    }
+    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+        return "[solar_core]";
+    }
+    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+        return "[lunar_blnd]";
+    }
+    if (weapon_id == game_state::venom_dagger_id) {
+        return "[venomdagr]";
+    }
+    if (weapon_id == game_state::iron_halberd_id) {
+        return "[halberd  ]";
+    }
+    return "[unknown  ]";
+}
+
+static int weapon_color_from_id(int weapon_id) {
+    if (weapon_id == 0) {
+        return color_empty_slot;
+    }
+    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+        return color_solar_slot;
+    }
+    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+        return color_lunar_slot;
+    }
+    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+        return color_player_hp;
+    }
+    if (weapon_id == game_state::venom_dagger_id) {
+        return color_enemy_stamina;
+    }
+    if (weapon_id == game_state::iron_halberd_id) {
+        return color_enemy_hp;
+    }
+    return color_artifact;
+}
+
+static int weapon_attr_from_id(int weapon_id) {
+    if (weapon_id == 0) {
+        return A_DIM;
+    }
+    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+        return A_BOLD;
+    }
+    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+        return A_BOLD;
+    }
+    return A_NORMAL;
+}
+
 static int find_contiguous_empty_slots(const int *row, int slot_count, int required_slots) {
     int run = 0;
     for (int i = 0; i < slot_count; ++i) {
@@ -240,6 +320,12 @@ static int find_contiguous_empty_slots(const int *row, int slot_count, int requi
 static void write_weapon_slots(int *row, int start_index, int slot_count, int weapon_id) {
     for (int i = 0; i < slot_count; ++i) {
         row[start_index + i] = weapon_id;
+    }
+}
+
+static void clear_weapon_slots(int *row, int start_index, int slot_count) {
+    for (int i = 0; i < slot_count; ++i) {
+        row[start_index + i] = 0;
     }
 }
 
@@ -286,11 +372,18 @@ static bool swap_to_long_term(int player_id) {
     if (!move_weapon_to_long_term(player_id, weapon_id, slot_count)) {
         return false;
     }
-    write_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, slot_count, 0);
+    clear_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, slot_count);
+    swap_happened_last = true;
+    std::snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "swapped [%s] to storage",
+        weapon_name_from_id(weapon_id)
+    );
     return true;
 }
 
-static bool allocate_inventory(int player_id, int weapon_id) {
+static bool allocate_inventory_recursive(int player_id, int weapon_id) {
     if (player_id < 0 || player_id >= game_state::max_players) {
         return false;
     }
@@ -310,7 +403,12 @@ static bool allocate_inventory(int player_id, int weapon_id) {
     if (!swap_to_long_term(player_id)) {
         return false;
     }
-    return allocate_inventory(player_id, weapon_id);
+    return allocate_inventory_recursive(player_id, weapon_id);
+}
+
+static bool allocate_inventory(int player_id, int weapon_id) {
+    swap_happened_last = false;
+    return allocate_inventory_recursive(player_id, weapon_id);
 }
 
 static void write_pickup_log(int player_id, int weapon_id, bool success) {
@@ -372,7 +470,9 @@ static void apply_pickup_drop_locked(int player_id) {
     bool success = allocate_inventory(player_id, dropped_weapon);
     shared_state->current_dropped_weapon = 0;
     shared_state->player_stamina[player_id] = 0;
-    write_pickup_log(player_id, dropped_weapon, success);
+    if (!swap_happened_last) {
+        write_pickup_log(player_id, dropped_weapon, success);
+    }
 }
 
 static void handle_player_action(int key) {
@@ -491,6 +591,9 @@ static bool init_ncurses_ui() {
         init_pair(color_enemy_hp, COLOR_RED, -1);
         init_pair(color_enemy_stamina, COLOR_MAGENTA, -1);
         init_pair(color_artifact, COLOR_WHITE, -1);
+        init_pair(color_empty_slot, COLOR_BLACK, -1);
+        init_pair(color_solar_slot, COLOR_YELLOW, -1);
+        init_pair(color_lunar_slot, COLOR_CYAN, -1);
     }
     if (!ensure_windows()) {
         return false;
@@ -562,9 +665,7 @@ static void draw_window_frame(WINDOW *target, const char *title) {
 static void draw_stat_line(
     WINDOW *target, int row, const char *label, int value, int max_value, int bar_width, int color_pair_id
 ) {
-    int h = 0;
-    int w = 0;
-    getmaxyx(target, h, w);
+    int w = getmaxx(target);
     int safe_width = bar_width;
     if (safe_width < 8) {
         safe_width = 8;
@@ -649,35 +750,70 @@ static void draw_enemies(const hip_snapshot *snapshot) {
     }
 }
 
-static void draw_inventory_row(
-    WINDOW *target, int row, const int *items, int count, const char *label, int color_pair_id
-) {
-    mvwprintw(target, row, 2, "%s", label);
-    wattron(target, COLOR_PAIR(color_pair_id));
-    for (int i = 0; i < count; ++i) {
-        char cell = items[i] == 0 ? '.' : '#';
-        mvwaddch(target, row, 8 + i, cell);
+static int find_inventory_player(const hip_snapshot *snapshot) {
+    int turn_player = find_turn_player_from_snapshot(snapshot);
+    if (turn_player >= 0) {
+        return turn_player;
     }
-    wattroff(target, COLOR_PAIR(color_pair_id));
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (snapshot->player_hp[i] > 0) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+static void draw_inventory_grid(
+    WINDOW *target, int start_row, int start_col, const int *slots, int row_count, int col_count, int col_width
+) {
+    for (int row = 0; row < row_count; ++row) {
+        for (int col = 0; col < col_count; ++col) {
+            int index = row * col_count + col;
+            int weapon_id = slots[index];
+            const char *label = weapon_label_from_id(weapon_id);
+            int color_pair = weapon_color_from_id(weapon_id);
+            int attr = weapon_attr_from_id(weapon_id);
+            int y = start_row + row;
+            int x = start_col + col * col_width;
+            wattron(target, COLOR_PAIR(color_pair) | attr);
+            mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
+            wattroff(target, COLOR_PAIR(color_pair) | attr);
+        }
+    }
 }
 
 static void draw_inventory(const hip_snapshot *snapshot) {
     werase(windows.inventory);
+    box(windows.inventory, 0, 0);
     draw_window_frame(windows.inventory, "inventory tetris");
-    for (int i = 0; i < game_state::max_players; ++i) {
-        char label[16];
-        std::snprintf(label, sizeof(label), "p%d inv", i + 1);
-        draw_inventory_row(
-            windows.inventory, 1 + i, snapshot->player_primary_inventory[i], game_state::inventory_slots, label, 2
-        );
+    int active_player = find_inventory_player(snapshot);
+    int w = getmaxx(windows.inventory);
+    int row_count = 4;
+    int col_count = 5;
+    int col_width = (w - 4) / col_count;
+    if (col_width < 6) {
+        col_width = 6;
     }
-    for (int i = 0; i < game_state::max_players; ++i) {
-        char label[16];
-        std::snprintf(label, sizeof(label), "p%d sto", i + 1);
-        draw_inventory_row(
-            windows.inventory, 7 + i, snapshot->long_term_storage[i], game_state::inventory_slots, label, 5
-        );
-    }
+    mvwprintw(windows.inventory, 1, 2, "gear bag p%d", active_player + 1);
+    draw_inventory_grid(
+        windows.inventory,
+        3,
+        2,
+        snapshot->player_primary_inventory[active_player],
+        row_count,
+        col_count,
+        col_width
+    );
+    mvwprintw(windows.inventory, 8, 2, "storage");
+    draw_inventory_grid(
+        windows.inventory,
+        9,
+        2,
+        snapshot->long_term_storage[active_player],
+        row_count,
+        col_count,
+        col_width
+    );
 }
 
 static void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
