@@ -81,6 +81,13 @@ const int pair_bg_banner_2 = 53;
 const int pair_bg_banner_3 = 54;
 const int pair_bg_banner_4 = 55;
 const int pair_bg_banner_5 = 56;
+const int pair_border_v1 = 57;
+const int pair_border_v2 = 58;
+const int pair_border_v3 = 59;
+const int pair_border_v4 = 60;
+const int pair_border_v5 = 61;
+const int pair_border_v6 = 62;
+const int pair_border_v7 = 63;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -841,8 +848,24 @@ void paint_rect(int y, int x, int h, int w, int pair) {
     attroff(COLOR_PAIR(pair));
 }
 
+int varied_border_pair(int requested_pair, int y, int x) {
+    if (requested_pair == pair_border_dead || requested_pair == pair_border_active) {
+        return requested_pair;
+    }
+    int options[7] = {
+        pair_border_v1, pair_border_v2, pair_border_v3, pair_border_v4,
+        pair_border_v5, pair_border_v6, pair_border_v7
+    };
+    int idx = ((y / 2) + (x / 3)) % 7;
+    if (idx < 0) {
+        idx = 0;
+    }
+    return options[idx];
+}
+
 void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, int extra_attr) {
-    draw_box_at(y, x, h, w, pair, extra_attr);
+    int border_pair = varied_border_pair(pair, y, x);
+    draw_box_at(y, x, h, w, border_pair, extra_attr);
     if (title == nullptr || w < 8) {
         return;
     }
@@ -851,7 +874,7 @@ void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, in
     if (title_len > max_title) {
         title_len = max_title;
     }
-    chtype attr = COLOR_PAIR(pair) | extra_attr | A_BOLD;
+    chtype attr = COLOR_PAIR(border_pair) | extra_attr | A_BOLD;
     mvaddch(y, x + 2, ' ' | attr);
     attron(attr);
     mvprintw(y, x + 3, "%.*s", title_len, title);
@@ -985,9 +1008,10 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     } else if (es.turn) {
         border_pair = pair_border_active;
         border_extra = A_BOLD;
-        draw_double_box_at(y, x, h, w, border_pair, border_extra);
+        int active_pair = varied_border_pair(border_pair, y, x);
+        draw_double_box_at(y, x, h, w, active_pair, border_extra);
         int title_len = (int)strlen(title);
-        chtype attr = COLOR_PAIR(border_pair) | A_BOLD | A_REVERSE;
+        chtype attr = COLOR_PAIR(active_pair) | A_BOLD | A_REVERSE;
         attron(attr);
         mvaddch(y, x + 2, ' ');
         mvprintw(y, x + 3, " %.*s ", title_len, title);
@@ -1954,6 +1978,13 @@ void init_color_pairs() {
     init_pair(pair_bg_banner_3, COLOR_WHITE, c_banner_3);
     init_pair(pair_bg_banner_4, COLOR_WHITE, c_banner_4);
     init_pair(pair_bg_banner_5, COLOR_WHITE, c_banner_5);
+    init_pair(pair_border_v1, COLOR_CYAN, -1);
+    init_pair(pair_border_v2, COLOR_YELLOW, -1);
+    init_pair(pair_border_v3, COLOR_GREEN, -1);
+    init_pair(pair_border_v4, COLOR_MAGENTA, -1);
+    init_pair(pair_border_v5, COLOR_WHITE, -1);
+    init_pair(pair_border_v6, COLOR_BLUE, -1);
+    init_pair(pair_border_v7, COLOR_RED, -1);
 }
 
 bool init_tui() {
