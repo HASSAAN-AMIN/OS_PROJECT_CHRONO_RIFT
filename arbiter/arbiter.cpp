@@ -166,8 +166,14 @@ void clear_state() {
     shared_state->current_dropped_weapon = 0;
     shared_state->active_player_count = 0;
     shared_state->active_enemy_count = 0;
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        shared_state->enemy_display_id[i] = 0;
+        shared_state->enemy_dead_count[i] = 0;
+    }
+    shared_state->next_enemy_display_id = 1;
     shared_state->active_player_index = -1;
     shared_state->enemy_kills = 0;
+    shared_state->total_kills = 0;
     shared_state->outcome = game_state::outcome_ongoing;
     shared_state->roll_number = active_roll_number;
     shared_state->arbiter_pid = 0;
@@ -276,6 +282,21 @@ int roll_enemy_speed() {
     return 10 + (rand() % 21);
 }
 
+int random_drop_weapon_id() {
+    int pool[] = {
+        game_state::splinter_stick_id,
+        game_state::venom_dagger_id,
+        game_state::obsidian_axe_id,
+        game_state::frostbow_id,
+        game_state::thunderstaff_id,
+        game_state::iron_halberd_id,
+        game_state::solar_core_id,
+        game_state::lunar_blade_id
+    };
+    int n = static_cast<int>(sizeof(pool) / sizeof(pool[0]));
+    return pool[rand() % n];
+}
+
 int roll_enemy_count() {
     return 2 + (rand() % 8);
 }
@@ -319,16 +340,21 @@ void initialize_enemies() {
             shared_state->enemy_speed[i] = roll_enemy_speed();
             shared_state->enemy_stamina[i] = 0;
             shared_state->enemy_damage[i] = common_damage;
+            shared_state->enemy_display_id[i] = i + 1;
+            shared_state->enemy_dead_count[i] = 0;
         } else {
             shared_state->enemy_hp[i] = 0;
             shared_state->enemy_max_hp[i] = 0;
             shared_state->enemy_speed[i] = 0;
             shared_state->enemy_stamina[i] = 0;
             shared_state->enemy_damage[i] = 0;
+            shared_state->enemy_display_id[i] = 0;
+            shared_state->enemy_dead_count[i] = 0;
         }
         previous_enemy_hp[i] = shared_state->enemy_hp[i];
     }
     shared_state->active_enemy_count = enemy_count;
+    shared_state->next_enemy_display_id = enemy_count + 1;
 }
 
 bool initialize_seeded_stats() {
@@ -422,23 +448,59 @@ void schedule_next_alarm_locked(time_t now) {
 }
 
 void track_enemy_deaths_locked() {
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        if (i >= shared_state->active_enemy_count) {
-            previous_enemy_hp[i] = shared_state->enemy_hp[i];
-            continue;
-        }
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
         int prev = previous_enemy_hp[i];
         int curr = shared_state->enemy_hp[i];
         if (prev > 0 && curr <= 0) {
-            shared_state->enemy_kills += 1;
+            int dead_id = shared_state->enemy_display_id[i];
+            if (dead_id <= 0) {
+                dead_id = i + 1;
+            }
+            shared_state->enemy_dead_count[i] += 1;
+            shared_state->total_kills += 1;
+            shared_state->enemy_kills = shared_state->total_kills;
+            shared_state->current_dropped_weapon = random_drop_weapon_id();
+            if ((rand() % 100) < 40) {
+                shared_state->eclipse_relic_present = 1;
+                shared_state->eclipse_relic_holder = -1;
+                shared_state->current_dropped_weapon = game_state::eclipse_relic_id;
+            }
+            if (shared_state->total_kills >= game_state::kills_required_to_win) {
+                shared_state->outcome = game_state::outcome_win;
+                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "VICTORY: all 10 enemies killed");
+                snprintf(shared_state->last_event, sizeof(shared_state->last_event), "victory_10");
+                arbiter_running = 0;
+                previous_enemy_hp[i] = curr;
+                continue;
+            }
+            int new_id = shared_state->next_enemy_display_id;
+            if (new_id <= 0) {
+                new_id = enemy_count + 1;
+            }
+            shared_state->next_enemy_display_id = new_id + 1;
+            shared_state->enemy_display_id[i] = new_id;
+            shared_state->enemy_hp[i] = roll_enemy_hp();
+            shared_state->enemy_max_hp[i] = shared_state->enemy_hp[i];
+            shared_state->enemy_stamina[i] = 0;
+            shared_state->enemy_speed[i] = roll_enemy_speed();
+            shared_state->enemy_damage[i] = enemy_damage_value();
+            shared_state->stun_end_time[i] = 0;
             snprintf(
                 shared_state->action_log, sizeof(shared_state->action_log),
-                "enemy %d eliminated (%d/%d kills)",
-                i + 1,
-                shared_state->enemy_kills,
-                game_state::kills_required_to_win
+                "enemy %d died, enemy %d entered slot %d, new enemy appeared",
+                dead_id,
+                new_id,
+                i + 1
             );
-            snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_%d_died", i + 1);
+            snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_respawn_%d", new_id);
+            curr = shared_state->enemy_hp[i];
         }
         previous_enemy_hp[i] = curr;
     }
@@ -495,14 +557,14 @@ void check_outcome_locked() {
     if (shared_state->outcome != game_state::outcome_ongoing) {
         return;
     }
-    if (shared_state->enemy_kills >= game_state::kills_required_to_win) {
+    if (shared_state->total_kills >= game_state::kills_required_to_win) {
         shared_state->outcome = game_state::outcome_win;
         snprintf(
             shared_state->action_log, sizeof(shared_state->action_log),
-            "VICTORY: %d enemies vanquished",
-            shared_state->enemy_kills
+            "VICTORY: all 10 enemies killed"
         );
-        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "victory");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "victory_10");
+        arbiter_running = 0;
         return;
     }
     int alive_players = 0;

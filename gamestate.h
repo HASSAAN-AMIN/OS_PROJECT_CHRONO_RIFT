@@ -98,8 +98,12 @@ struct game_state {
     int current_dropped_weapon = 0;
     int active_player_count;
     int active_enemy_count;
+    int enemy_display_id[max_enemies];
+    int enemy_dead_count[max_enemies];
+    int next_enemy_display_id;
     int active_player_index;
     int enemy_kills;
+    int total_kills;
     int outcome;
     int roll_number;
     pid_t arbiter_pid;

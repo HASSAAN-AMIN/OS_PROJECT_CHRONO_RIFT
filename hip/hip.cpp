@@ -111,6 +111,9 @@ struct world_snapshot {
     int eclipse_relic_present;
     int current_dropped_weapon;
     int enemy_kills;
+    int total_kills;
+    int enemy_display_id[game_state::max_enemies];
+    int enemy_dead_count[game_state::max_enemies];
     int outcome;
     int roll_number;
     char action_log[256];
@@ -449,30 +452,6 @@ int swap_in_from_storage_locked(int player_index) {
     return chosen_weapon;
 }
 
-void distribute_drop_on_enemy_death_locked(int enemy_index) {
-    if (shared_state->current_dropped_weapon != 0) {
-        return;
-    }
-    int drop = 0;
-    if (shared_state->solar_core_holder < 0) {
-        drop = game_state::solar_core_id;
-    } else if (shared_state->lunar_blade_holder < 0) {
-        drop = game_state::lunar_blade_id;
-    } else {
-        int weapons[] = {
-            game_state::splinter_stick_id,
-            game_state::venom_dagger_id,
-            game_state::obsidian_axe_id,
-            game_state::frostbow_id,
-            game_state::thunderstaff_id,
-            game_state::iron_halberd_id
-        };
-        int count = (int)(sizeof(weapons) / sizeof(weapons[0]));
-        drop = weapons[enemy_index % count];
-    }
-    shared_state->current_dropped_weapon = drop;
-}
-
 bool is_player_active_locked(int player_id) {
     if (player_id < 0 || player_id >= game_state::max_players) {
         return false;
@@ -520,10 +499,9 @@ void perform_strike(int player_id) {
     }
     shared_state->enemy_hp[target] = new_hp;
     if (new_hp == 0) {
-        distribute_drop_on_enemy_death_locked(target);
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d strike: hit enemy %d for %d - enemy died, dropped %s",
-                 player_id + 1, target + 1, dmg, weapon_name(shared_state->current_dropped_weapon));
+                 "player %d strike: hit enemy %d for %d - enemy defeated",
+                 player_id + 1, target + 1, dmg);
     } else {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
                  "player %d strike: hit enemy %d for %d damage",
@@ -571,11 +549,9 @@ void perform_use_weapon(int player_id) {
     }
     shared_state->enemy_hp[target] = new_hp;
     if (new_hp == 0) {
-        distribute_drop_on_enemy_death_locked(target);
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d wielded %s: %d damage on enemy %d - enemy died, dropped %s",
-                 player_id + 1, weapon_name(weapon_id), dmg, target + 1,
-                 weapon_name(shared_state->current_dropped_weapon));
+                 "player %d wielded %s: %d damage on enemy %d - enemy defeated",
+                 player_id + 1, weapon_name(weapon_id), dmg, target + 1);
     } else {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
                  "player %d wielded %s: %d damage on enemy %d",
@@ -806,10 +782,9 @@ void perform_stun(int player_id) {
     pid_t asp_pid_local = shared_state->asp_pid;
     pid_t arbiter_pid_local = shared_state->arbiter_pid;
     if (new_hp == 0) {
-        distribute_drop_on_enemy_death_locked(target);
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d STUN: enemy %d hit for %d - eliminated, dropped %s",
-                 player_id + 1, target + 1, dmg, weapon_name(shared_state->current_dropped_weapon));
+                 "player %d STUN: enemy %d hit for %d - enemy eliminated",
+                 player_id + 1, target + 1, dmg);
     } else {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
                  "player %d STUN: enemy %d hit for %d, stunned 3s",
@@ -911,6 +886,7 @@ void take_world_snapshot(world_snapshot &snap) {
     snap.eclipse_relic_present = shared_state->eclipse_relic_present;
     snap.current_dropped_weapon = shared_state->current_dropped_weapon;
     snap.enemy_kills = shared_state->enemy_kills;
+    snap.total_kills = shared_state->total_kills;
     snap.outcome = shared_state->outcome;
     snap.roll_number = shared_state->roll_number;
     snap.arbiter_pid = shared_state->arbiter_pid;
@@ -947,6 +923,8 @@ void take_world_snapshot(world_snapshot &snap) {
     }
 
     for (int i = 0; i < game_state::max_enemies; ++i) {
+        snap.enemy_display_id[i] = shared_state->enemy_display_id[i];
+        snap.enemy_dead_count[i] = shared_state->enemy_dead_count[i];
         snap.enemies[i].hp = shared_state->enemy_hp[i];
         snap.enemies[i].max_hp = shared_state->enemy_max_hp[i] > 0 ? shared_state->enemy_max_hp[i] : 1;
         snap.enemies[i].stamina = shared_state->enemy_stamina[i];
@@ -1297,7 +1275,12 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
         if (box_y + per_h > inner_y + inner_h) {
             break;
         }
-        snprintf(title_buf, sizeof(title_buf), "E%d dmg%d", i + 1, snap.enemies[i].damage);
+        int eid = snap.enemy_display_id[i];
+        if (eid <= 0) {
+            eid = i + 1;
+        }
+        int fallen = snap.enemy_dead_count[i];
+        snprintf(title_buf, sizeof(title_buf), "E%d dmg%d d%d", eid, snap.enemies[i].damage, fallen);
         render_entity(box_y, box_x, per_h, per_w, title_buf, snap.enemies[i], false);
     }
 }
@@ -1708,8 +1691,8 @@ void render_frame(const world_snapshot &snap) {
     if (snap.outcome == game_state::outcome_win) {
         char line1[64];
         char line2[64];
-        snprintf(line1, sizeof(line1), "%d enemies vanquished", snap.enemy_kills);
-        snprintf(line2, sizeof(line2), "roll seed %d guided your hand", snap.roll_number);
+        snprintf(line1, sizeof(line1), "all 10 enemies killed");
+        snprintf(line2, sizeof(line2), "total kills %d  roll seed %d", snap.total_kills, snap.roll_number);
         render_overlay(term_h, term_w, "  V I C T O R Y  ", line1, line2, pair_overlay_win);
     } else if (snap.outcome == game_state::outcome_lose) {
         char line1[64];
