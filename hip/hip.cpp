@@ -62,6 +62,10 @@ const int pair_help = 36;
 const int pair_canvas = 37;
 const int pair_panel_fill = 38;
 const int pair_top_hud = 39;
+const int pair_fill_player = 40;
+const int pair_fill_arena = 41;
+const int pair_fill_enemy = 42;
+const int pair_fill_footer = 43;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -1027,9 +1031,9 @@ void draw_double_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
     }
 }
 
-void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, int extra_attr) {
+void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, int extra_attr, int fill_pair) {
     if (h > 2 && w > 2) {
-        fill_rect(y + 1, x + 1, h - 2, w - 2, pair_panel_fill);
+        fill_rect(y + 1, x + 1, h - 2, w - 2, fill_pair);
     }
     draw_box_at(y, x, h, w, pair, extra_attr);
     if (title == nullptr || w < 8) {
@@ -1160,7 +1164,7 @@ void draw_inventory_strip(int y, int x, int width, const int *inventory, bool de
     }
 }
 
-void render_entity(int y, int x, int h, int w, const char *title, const entity_snapshot &es, bool is_player) {
+void render_entity(int y, int x, int h, int w, const char *title, const entity_snapshot &es, bool is_player, int fill_pair) {
     int border_pair = pair_border_normal;
     int border_extra = 0;
     if (es.dead) {
@@ -1169,6 +1173,9 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     } else if (es.turn) {
         border_pair = pair_border_active;
         border_extra = A_BOLD;
+        if (h > 2 && w > 2) {
+            fill_rect(y + 1, x + 1, h - 2, w - 2, fill_pair);
+        }
         draw_double_box_at(y, x, h, w, border_pair, border_extra);
         int title_len = (int)strlen(title);
         chtype attr = COLOR_PAIR(border_pair) | A_BOLD | A_REVERSE;
@@ -1177,11 +1184,11 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         mvprintw(y, x + 3, " %.*s ", title_len, title);
         attroff(attr);
     } else {
-        draw_titled_box(y, x, h, w, title, border_pair, border_extra);
+        draw_titled_box(y, x, h, w, title, border_pair, border_extra, fill_pair);
     }
     if (es.dead || (!es.turn && !es.dead)) {
         if (!es.turn) {
-            draw_titled_box(y, x, h, w, title, border_pair, border_extra);
+            draw_titled_box(y, x, h, w, title, border_pair, border_extra, fill_pair);
         }
     }
     int inner_y = y + 1;
@@ -1209,26 +1216,26 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         time_t now = time(nullptr);
         if (es.stun_end > now) {
             int seconds_left = (int)(es.stun_end - now);
-            attron(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_status_warn) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "[STUNNED %ds]", seconds_left);
-            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD);
             if (inner_w > 18 && es.damage > 0) {
                 attron(COLOR_PAIR(pair_default));
                 mvprintw(inner_y + row, inner_x + 14, "dmg %d", es.damage);
                 attroff(COLOR_PAIR(pair_default));
             }
         } else if (es.dead) {
-            attron(COLOR_PAIR(pair_border_dead) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_border_dead) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "  -- ELIMINATED --  ");
-            attroff(COLOR_PAIR(pair_border_dead) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_border_dead) | A_BOLD);
         } else {
             attron(COLOR_PAIR(pair_default));
             mvprintw(inner_y + row, inner_x, "dmg %d", es.damage);
             attroff(COLOR_PAIR(pair_default));
             if (es.turn) {
-                attron(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+                attron(COLOR_PAIR(pair_border_active) | A_BOLD);
                 mvprintw(inner_y + row, inner_x + 8, "<< YOUR TURN >>");
-                attroff(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+                attroff(COLOR_PAIR(pair_border_active) | A_BOLD);
             }
         }
         row++;
@@ -1249,7 +1256,7 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
 }
 
 void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "player squad", pair_panel_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "player squad", pair_panel_title, A_BOLD, pair_fill_player);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1272,13 +1279,13 @@ void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap)
             break;
         }
         snprintf(title_buf, sizeof(title_buf), "P%d  dmg %d", i + 1, snap.players[i].damage);
-        render_entity(drawn_y, inner_x, per_h, inner_w, title_buf, snap.players[i], true);
+        render_entity(drawn_y, inner_x, per_h, inner_w, title_buf, snap.players[i], true, pair_fill_player);
         drawn_y += per_h;
     }
 }
 
 void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "enemy forces", pair_panel_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "enemy forces", pair_panel_title, A_BOLD, pair_fill_enemy);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1317,7 +1324,7 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
             break;
         }
         snprintf(title_buf, sizeof(title_buf), "E%d dmg%d", i + 1, snap.enemies[i].damage);
-        render_entity(box_y, box_x, per_h, per_w, title_buf, snap.enemies[i], false);
+        render_entity(box_y, box_x, per_h, per_w, title_buf, snap.enemies[i], false, pair_fill_enemy);
     }
 }
 
@@ -1343,7 +1350,7 @@ void render_banner(int y, int x, int w) {
 }
 
 void render_action_log_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "action log", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "action log", pair_arena_title, A_BOLD, pair_fill_arena);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1403,7 +1410,7 @@ void render_kill_counter(int y, int x, int w, const world_snapshot &snap) {
 }
 
 void render_system_status_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "system status", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "system status", pair_arena_title, A_BOLD, pair_fill_arena);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1426,17 +1433,17 @@ void render_system_status_box(int y, int x, int h, int w, const world_snapshot &
     }
     if (row < max_rows) {
         if (snap.outcome == game_state::outcome_win) {
-            attron(COLOR_PAIR(pair_overlay_win) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_overlay_win) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "STATE: VICTORY");
-            attroff(COLOR_PAIR(pair_overlay_win) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_overlay_win) | A_BOLD);
         } else if (snap.outcome == game_state::outcome_lose) {
-            attron(COLOR_PAIR(pair_overlay_lose) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_overlay_lose) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "STATE: DEFEAT");
-            attroff(COLOR_PAIR(pair_overlay_lose) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_overlay_lose) | A_BOLD);
         } else if (snap.ultimate_active) {
-            attron(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_status_warn) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "STATE: ULTIMATE FROZEN");
-            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD);
         } else if (snap.stun_active) {
             attron(COLOR_PAIR(pair_status_warn) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "STATE: stun in progress");
@@ -1450,9 +1457,9 @@ void render_system_status_box(int y, int x, int h, int w, const world_snapshot &
     }
     if (row < max_rows) {
         if (strstr(snap.action_log, "deadlock") != nullptr) {
-            attron(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attron(COLOR_PAIR(pair_status_warn) | A_BOLD);
             mvprintw(inner_y + row, inner_x, "DEADLOCK BROKEN BY ARBITER");
-            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+            attroff(COLOR_PAIR(pair_status_warn) | A_BOLD);
             row++;
         } else if (snap.active_player_index >= 0) {
             attron(COLOR_PAIR(pair_status_ok) | A_BOLD);
@@ -1467,7 +1474,7 @@ void render_system_status_box(int y, int x, int h, int w, const world_snapshot &
 }
 
 void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "artifact tracker", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "artifact tracker", pair_arena_title, A_BOLD, pair_fill_arena);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1527,11 +1534,11 @@ void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapsho
         const char *name = weapon_name(snap.current_dropped_weapon);
         int icon_pair = weapon_color_pair_for(snap.current_dropped_weapon);
         char icon_letter = weapon_letter(snap.current_dropped_weapon);
-        attron(COLOR_PAIR(icon_pair) | A_REVERSE | A_BOLD | A_BLINK);
+        attron(COLOR_PAIR(icon_pair) | A_REVERSE | A_BOLD);
         mvaddch(inner_y + row, inner_x, ' ');
         mvaddch(inner_y + row, inner_x + 1, icon_letter);
         mvaddch(inner_y + row, inner_x + 2, ' ');
-        attroff(COLOR_PAIR(icon_pair) | A_REVERSE | A_BOLD | A_BLINK);
+        attroff(COLOR_PAIR(icon_pair) | A_REVERSE | A_BOLD);
         attron(COLOR_PAIR(pair_artifact_ground) | A_BOLD);
         mvprintw(inner_y + row, inner_x + 4, "ground: %s [press 5]", name);
         attroff(COLOR_PAIR(pair_artifact_ground) | A_BOLD);
@@ -1539,7 +1546,7 @@ void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapsho
 }
 
 void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "combat arena", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "combat arena", pair_arena_title, A_BOLD, pair_fill_arena);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1582,6 +1589,7 @@ void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) 
 }
 
 void render_top_hud(int y, int term_w, const world_snapshot &snap) {
+    fill_rect(y, 0, 3, term_w, pair_top_hud);
     draw_double_box_at(y, 0, 3, term_w, pair_top_hud, A_BOLD);
     attron(COLOR_PAIR(pair_top_hud) | A_BOLD | A_REVERSE);
     mvprintw(y + 1, 2, " chrono rift ");
@@ -1597,7 +1605,8 @@ void render_top_hud(int y, int term_w, const world_snapshot &snap) {
 }
 
 void render_command_bar(int y, int term_w, int h) {
-    attron(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
+    fill_rect(y, 0, h, term_w, pair_fill_footer);
+    attron(COLOR_PAIR(pair_command_bar) | A_BOLD);
     for (int row = 0; row < h; ++row) {
         for (int i = 0; i < term_w; ++i) {
             mvaddch(y + row, i, ' ');
@@ -1621,7 +1630,7 @@ void render_command_bar(int y, int term_w, int h) {
     if (h > 1) {
         mvprintw(y + 1, s2, "%.*s", l2, line2);
     }
-    attroff(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
+    attroff(COLOR_PAIR(pair_command_bar) | A_BOLD);
 }
 
 void render_overlay(int term_h, int term_w, const char *title, const char *line1, const char *line2, int color) {
@@ -1901,6 +1910,10 @@ void init_color_pairs() {
     short theme_bg = COLOR_BLACK;
     short panel_bg = COLOR_BLACK;
     short hud_bg = COLOR_BLACK;
+    short player_bg = COLOR_BLACK;
+    short arena_bg = COLOR_BLACK;
+    short enemy_bg = COLOR_BLACK;
+    short footer_bg = COLOR_BLACK;
     short text_fg = COLOR_CYAN;
     short accent_fg = COLOR_GREEN;
     if (can_change_color() && COLORS >= 64) {
@@ -1910,27 +1923,47 @@ void init_color_pairs() {
         const short c_text = 43;
         const short c_accent = 44;
         const short c_water = 45;
-        init_color(c_bg, 20, 130, 90);
-        init_color(c_panel, 30, 210, 150);
-        init_color(c_hud, 40, 260, 180);
-        init_color(c_text, 870, 980, 940);
-        init_color(c_accent, 600, 980, 760);
-        init_color(c_water, 560, 920, 980);
+        const short c_player = 46;
+        const short c_arena = 47;
+        const short c_enemy = 48;
+        const short c_footer = 49;
+        init_color(c_bg, 15, 50, 55);
+        init_color(c_panel, 25, 85, 90);
+        init_color(c_hud, 40, 120, 105);
+        init_color(c_text, 820, 980, 930);
+        init_color(c_accent, 520, 930, 760);
+        init_color(c_water, 520, 860, 940);
+        init_color(c_player, 30, 90, 70);
+        init_color(c_arena, 28, 78, 96);
+        init_color(c_enemy, 52, 64, 90);
+        init_color(c_footer, 18, 72, 72);
         theme_bg = c_bg;
         panel_bg = c_panel;
         hud_bg = c_hud;
+        player_bg = c_player;
+        arena_bg = c_arena;
+        enemy_bg = c_enemy;
+        footer_bg = c_footer;
         text_fg = c_text;
         accent_fg = c_accent;
         init_pair(pair_canvas, text_fg, theme_bg);
         init_pair(pair_panel_fill, text_fg, panel_bg);
         init_pair(pair_top_hud, text_fg, hud_bg);
+        init_pair(pair_fill_player, text_fg, player_bg);
+        init_pair(pair_fill_arena, text_fg, arena_bg);
+        init_pair(pair_fill_enemy, text_fg, enemy_bg);
+        init_pair(pair_fill_footer, text_fg, footer_bg);
         init_pair(pair_default, text_fg, theme_bg);
         init_pair(pair_border_normal, c_water, panel_bg);
         init_pair(pair_border_active, c_accent, panel_bg);
     } else {
         init_pair(pair_canvas, COLOR_CYAN, COLOR_BLACK);
         init_pair(pair_panel_fill, COLOR_CYAN, COLOR_BLACK);
-        init_pair(pair_top_hud, COLOR_WHITE, COLOR_GREEN);
+        init_pair(pair_top_hud, COLOR_WHITE, COLOR_BLACK);
+        init_pair(pair_fill_player, COLOR_WHITE, COLOR_BLACK);
+        init_pair(pair_fill_arena, COLOR_WHITE, COLOR_BLACK);
+        init_pair(pair_fill_enemy, COLOR_WHITE, COLOR_BLACK);
+        init_pair(pair_fill_footer, COLOR_WHITE, COLOR_BLACK);
         init_pair(pair_default, COLOR_CYAN, COLOR_BLACK);
         init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLACK);
         init_pair(pair_border_active, COLOR_GREEN, COLOR_BLACK);
@@ -1949,7 +1982,7 @@ void init_color_pairs() {
     init_pair(pair_artifact_lunar, COLOR_CYAN, panel_bg);
     init_pair(pair_artifact_eclipse, COLOR_MAGENTA, panel_bg);
     init_pair(pair_artifact_ground, COLOR_BLUE, panel_bg);
-    init_pair(pair_command_bar, COLOR_WHITE, COLOR_GREEN);
+    init_pair(pair_command_bar, text_fg, footer_bg);
     init_pair(pair_inv_empty, COLOR_BLACK, COLOR_BLACK);
     init_pair(pair_inv_splinter, COLOR_GREEN, panel_bg);
     init_pair(pair_inv_venom, COLOR_MAGENTA, panel_bg);
