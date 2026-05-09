@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <queue>
+#include <vector>
 
 #include <fcntl.h>
 #include <ncurses.h>
@@ -85,6 +87,7 @@ int show_help_overlay = 0;
 unsigned long render_frame_counter = 0;
 time_t last_event_time = 0;
 char last_event_label[64] = {0};
+queue<int> enemy_target_queue;
 
 struct entity_snapshot {
     int hp;
@@ -294,6 +297,80 @@ int find_first_living_enemy_locked() {
     return -1;
 }
 
+vector<int> collect_living_enemy_slots_locked() {
+    vector<int> slots;
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
+        if (shared_state->enemy_hp[i] > 0) {
+            slots.push_back(i);
+        }
+    }
+    return slots;
+}
+
+void clear_enemy_target_queue_locked() {
+    queue<int> empty;
+    enemy_target_queue.swap(empty);
+}
+
+void normalize_enemy_target_queue_locked() {
+    vector<int> living = collect_living_enemy_slots_locked();
+    if (living.empty()) {
+        clear_enemy_target_queue_locked();
+        return;
+    }
+    vector<int> alive_map(game_state::max_enemies, 0);
+    for (int idx : living) {
+        alive_map[idx] = 1;
+    }
+    vector<int> ordered;
+    vector<int> seen(game_state::max_enemies, 0);
+    queue<int> current = enemy_target_queue;
+    while (!current.empty()) {
+        int v = current.front();
+        current.pop();
+        if (v >= 0 && v < game_state::max_enemies && alive_map[v] && !seen[v]) {
+            ordered.push_back(v);
+            seen[v] = 1;
+        }
+    }
+    for (int idx : living) {
+        if (!seen[idx]) {
+            ordered.push_back(idx);
+            seen[idx] = 1;
+        }
+    }
+    clear_enemy_target_queue_locked();
+    for (int idx : ordered) {
+        enemy_target_queue.push(idx);
+    }
+}
+
+int peek_target_enemy_locked() {
+    normalize_enemy_target_queue_locked();
+    if (enemy_target_queue.empty()) {
+        return -1;
+    }
+    return enemy_target_queue.front();
+}
+
+int next_target_enemy_locked() {
+    normalize_enemy_target_queue_locked();
+    if (enemy_target_queue.empty()) {
+        return -1;
+    }
+    int target = enemy_target_queue.front();
+    enemy_target_queue.pop();
+    enemy_target_queue.push(target);
+    return target;
+}
+
 int find_contiguous_free_in_array(const int *arr, int needed) {
     int run = 0;
     int start = -1;
@@ -392,6 +469,12 @@ int allocate_weapon_iterative_locked(int player_index, int weapon_id) {
     }
     int *primary = shared_state->player_primary_inventory[player_index];
     int *storage = shared_state->long_term_storage[player_index];
+    vector<int> primary_backup(game_state::inventory_slots);
+    vector<int> storage_backup(game_state::inventory_slots);
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        primary_backup[i] = primary[i];
+        storage_backup[i] = storage[i];
+    }
     int safety = game_state::inventory_slots + 2;
     while (safety-- > 0) {
         int start = find_contiguous_free_in_array(primary, needed);
@@ -407,10 +490,18 @@ int allocate_weapon_iterative_locked(int player_index, int weapon_id) {
         int evict_weapon = primary[evict_start];
         int storage_start = find_contiguous_free_in_array(storage, evict_size);
         if (storage_start < 0) {
+            for (int i = 0; i < game_state::inventory_slots; ++i) {
+                primary[i] = primary_backup[i];
+                storage[i] = storage_backup[i];
+            }
             return -1;
         }
         place_weapon(storage, storage_start, evict_size, evict_weapon);
         zero_run(primary, evict_start, evict_size);
+    }
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        primary[i] = primary_backup[i];
+        storage[i] = storage_backup[i];
     }
     return -1;
 }
@@ -485,7 +576,7 @@ void perform_strike(int player_id) {
         unlock_memory();
         return;
     }
-    int target = find_first_living_enemy_locked();
+    int target = next_target_enemy_locked();
     if (target < 0) {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
                  "player %d strike: no living enemies", player_id + 1);
@@ -535,7 +626,7 @@ void perform_use_weapon(int player_id) {
         unlock_memory();
         return;
     }
-    int target = find_first_living_enemy_locked();
+    int target = next_target_enemy_locked();
     if (target < 0) {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log),
                  "player %d use weapon: no living enemies", player_id + 1);
@@ -576,7 +667,7 @@ void perform_exhaust(int player_id) {
         unlock_memory();
         return;
     }
-    int target = find_first_living_enemy_locked();
+    int target = next_target_enemy_locked();
     if (target < 0) {
         unlock_memory();
         return;
@@ -767,7 +858,7 @@ void perform_stun(int player_id) {
         unlock_memory();
         return;
     }
-    int target = find_first_living_enemy_locked();
+    int target = next_target_enemy_locked();
     if (target < 0) {
         unlock_memory();
         return;
@@ -898,7 +989,7 @@ void take_world_snapshot(world_snapshot &snap) {
     memcpy(snap.last_event, shared_state->last_event, sizeof(snap.last_event));
     snap.last_event[sizeof(snap.last_event) - 1] = '\0';
 
-    snap.target_enemy = find_first_living_enemy_locked();
+    snap.target_enemy = peek_target_enemy_locked();
 
     time_t now = time(nullptr);
     bool any_player_stunned = false;
@@ -1327,6 +1418,33 @@ void render_enemy_timeline_box(int y, int x, int h, int w, const world_snapshot 
     }
 }
 
+vector<int> build_enemy_render_slots(const world_snapshot &snap) {
+    vector<int> live_slots;
+    vector<int> dead_slots;
+    int active = snap.active_enemy_count;
+    if (active < 0) {
+        active = 0;
+    }
+    if (active > game_state::max_enemies) {
+        active = game_state::max_enemies;
+    }
+    for (int i = 0; i < active; ++i) {
+        if (snap.enemies[i].hp > 0) {
+            live_slots.push_back(i);
+        } else {
+            dead_slots.push_back(i);
+        }
+    }
+    vector<int> slots;
+    for (int idx : live_slots) {
+        slots.push_back(idx);
+    }
+    for (int idx : dead_slots) {
+        slots.push_back(idx);
+    }
+    return slots;
+}
+
 void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) {
     draw_titled_box(y, x, h, w, "enemy forces", pair_panel_title, A_BOLD);
     int inner_y = y + 1;
@@ -1349,12 +1467,10 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     if (detail_h < 4) {
         return;
     }
-    int active = snap.active_enemy_count;
+    vector<int> render_slots = build_enemy_render_slots(snap);
+    int active = (int)render_slots.size();
     if (active <= 0) {
         active = 1;
-    }
-    if (active > game_state::max_enemies) {
-        active = game_state::max_enemies;
     }
     int columns = 1;
     int min_box_w = 28;
@@ -1375,6 +1491,10 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     int per_w = inner_w / columns;
     char title_buf[32];
     for (int i = 0; i < active; ++i) {
+        if (i >= (int)render_slots.size()) {
+            break;
+        }
+        int slot = render_slots[i];
         int col = i % columns;
         int row = i / columns;
         int box_y = detail_y + row * per_h;
@@ -1382,13 +1502,13 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
         if (box_y + per_h > detail_y + detail_h) {
             break;
         }
-        int eid = snap.enemy_display_id[i];
+        int eid = snap.enemy_display_id[slot];
         if (eid <= 0) {
-            eid = i + 1;
+            eid = slot + 1;
         }
-        int fallen = snap.enemy_dead_count[i];
-        snprintf(title_buf, sizeof(title_buf), "E%d dmg%d d%d", eid, snap.enemies[i].damage, fallen);
-        render_entity(box_y, box_x, per_h, per_w, title_buf, snap.enemies[i], false);
+        int fallen = snap.enemy_dead_count[slot];
+        snprintf(title_buf, sizeof(title_buf), "E%d dmg%d d%d", eid, snap.enemies[slot].damage, fallen);
+        render_entity(box_y, box_x, per_h, per_w, title_buf, snap.enemies[slot], false);
     }
 }
 
