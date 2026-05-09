@@ -209,6 +209,22 @@ bool should_skip() {
     return (rand() % 100) < enemy_skip_chance_percent;
 }
 
+void register_waiters_after_enemy_pickup(int holder_id, int weapon_id) {
+    if (weapon_id == game_state::solar_core_id) {
+        int lunar_holder = shared_state->lunar_blade_holder;
+        if (lunar_holder >= 0 && lunar_holder != holder_id) {
+            shared_state->lunar_blade_waiter = holder_id;
+            shared_state->solar_core_waiter = lunar_holder;
+        }
+    } else if (weapon_id == game_state::lunar_blade_id) {
+        int solar_holder = shared_state->solar_core_holder;
+        if (solar_holder >= 0 && solar_holder != holder_id) {
+            shared_state->solar_core_waiter = holder_id;
+            shared_state->lunar_blade_waiter = solar_holder;
+        }
+    }
+}
+
 void perform_enemy_pickup_drop(int enemy_id) {
     int dropped = shared_state->current_dropped_weapon;
     if (dropped == 0) {
@@ -218,8 +234,10 @@ void perform_enemy_pickup_drop(int enemy_id) {
     shared_state->current_dropped_weapon = 0;
     if (dropped == game_state::solar_core_id) {
         shared_state->solar_core_holder = holder_id;
+        register_waiters_after_enemy_pickup(holder_id, dropped);
     } else if (dropped == game_state::lunar_blade_id) {
         shared_state->lunar_blade_holder = holder_id;
+        register_waiters_after_enemy_pickup(holder_id, dropped);
     } else if (dropped == game_state::eclipse_relic_id) {
         shared_state->eclipse_relic_holder = holder_id;
         shared_state->eclipse_relic_present = 1;

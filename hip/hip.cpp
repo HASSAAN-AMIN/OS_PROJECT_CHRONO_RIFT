@@ -2057,11 +2057,16 @@ int main(int argc, char **argv) {
         return 1;
     }
     pthread_t outcome_thread;
+    bool outcome_thread_started = false;
     if (pthread_create(&outcome_thread, nullptr, outcome_watch_loop, nullptr) != 0) {
         print_errno("pthread_create outcome watch failed");
+    } else {
+        outcome_thread_started = true;
     }
     join_threads();
-    pthread_join(outcome_thread, nullptr);
+    if (outcome_thread_started) {
+        pthread_join(outcome_thread, nullptr);
+    }
     cleanup_tui_once();
     cleanup_resources();
     return 0;

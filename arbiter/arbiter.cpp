@@ -594,7 +594,7 @@ void initialize_enemies() {
 }
 
 bool initialize_seeded_stats() {
-    srand(240880);
+    srand(static_cast<unsigned int>(active_roll_number));
     if (!lock_state()) {
         return false;
     }
@@ -612,6 +612,59 @@ bool initialize_seeded_stats() {
         return false;
     }
     return true;
+}
+
+bool is_player_entity_id(int entity_id) {
+    return entity_id >= 0 && entity_id < game_state::max_players;
+}
+
+bool is_enemy_entity_id(int entity_id) {
+    int base = game_state::max_players;
+    return entity_id >= base && entity_id < base + game_state::max_enemies;
+}
+
+bool is_entity_alive_locked(int entity_id) {
+    if (is_player_entity_id(entity_id)) {
+        return shared_state->player_hp[entity_id] > 0;
+    }
+    if (is_enemy_entity_id(entity_id)) {
+        int enemy_id = entity_id - game_state::max_players;
+        return shared_state->enemy_hp[enemy_id] > 0;
+    }
+    return false;
+}
+
+void normalize_waiters_locked() {
+    if (shared_state->solar_core_holder < 0 || !is_entity_alive_locked(shared_state->solar_core_holder)) {
+        shared_state->solar_core_holder = -1;
+        shared_state->solar_core_waiter = -1;
+    }
+    if (shared_state->lunar_blade_holder < 0 || !is_entity_alive_locked(shared_state->lunar_blade_holder)) {
+        shared_state->lunar_blade_holder = -1;
+        shared_state->lunar_blade_waiter = -1;
+    }
+    if (shared_state->solar_core_waiter >= 0 && !is_entity_alive_locked(shared_state->solar_core_waiter)) {
+        shared_state->solar_core_waiter = -1;
+    }
+    if (shared_state->lunar_blade_waiter >= 0 && !is_entity_alive_locked(shared_state->lunar_blade_waiter)) {
+        shared_state->lunar_blade_waiter = -1;
+    }
+}
+
+void register_waiters_after_pickup_locked(int picker_entity, int weapon_id) {
+    if (weapon_id == game_state::solar_core_id) {
+        int lunar_holder = shared_state->lunar_blade_holder;
+        if (lunar_holder >= 0 && lunar_holder != picker_entity) {
+            shared_state->lunar_blade_waiter = picker_entity;
+            shared_state->solar_core_waiter = lunar_holder;
+        }
+    } else if (weapon_id == game_state::lunar_blade_id) {
+        int solar_holder = shared_state->solar_core_holder;
+        if (solar_holder >= 0 && solar_holder != picker_entity) {
+            shared_state->solar_core_waiter = picker_entity;
+            shared_state->lunar_blade_waiter = solar_holder;
+        }
+    }
 }
 
 void update_cached_pids_locked() {
@@ -908,8 +961,10 @@ void execute_player_action_locked(int player_id, int action, int target, time_t 
                 shared_state->current_dropped_weapon = 0;
                 if (dropped == game_state::solar_core_id) {
                     shared_state->solar_core_holder = player_id;
+                    register_waiters_after_pickup_locked(player_id, dropped);
                 } else if (dropped == game_state::lunar_blade_id) {
                     shared_state->lunar_blade_holder = player_id;
+                    register_waiters_after_pickup_locked(player_id, dropped);
                 } else if (dropped == game_state::eclipse_relic_id) {
                     shared_state->eclipse_relic_holder = player_id;
                     shared_state->eclipse_relic_present = 1;
@@ -1014,6 +1069,7 @@ bool tick_stamina_progression() {
     apply_enemy_turn_timeouts_locked(now);
     track_enemy_deaths_locked();
     reset_enemy_turn_timeout_locked();
+    normalize_waiters_locked();
     update_active_player_locked();
     maybe_spawn_eclipse_relic_locked(now);
     check_outcome_locked();
@@ -1118,6 +1174,8 @@ void break_deadlock_locked() {
     } else {
         shared_state->solar_core_holder = -1;
     }
+    shared_state->solar_core_waiter = -1;
+    shared_state->lunar_blade_waiter = -1;
     deadlock_broken = 1;
 }
 
