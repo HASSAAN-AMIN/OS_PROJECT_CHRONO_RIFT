@@ -53,6 +53,8 @@ struct game_state {
 
     static constexpr int player_max_stamina = 100;
     static constexpr int enemy_max_stamina = 150;
+    static constexpr int player_base_damage = 10;
+    static constexpr int enemy_attack_damage = 18;
 
     static constexpr int outcome_ongoing = 0;
     static constexpr int outcome_win = 1;

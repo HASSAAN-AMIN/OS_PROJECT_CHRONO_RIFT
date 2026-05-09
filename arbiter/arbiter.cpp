@@ -16,7 +16,7 @@
 using namespace std;
 
 const char *shared_memory_name = "/chrono_rift_game_state";
-const int default_roll_number = 22000880;
+const int default_roll_number = 240880;
 const useconds_t deadlock_check_sleep_us = 2000000;
 const int eclipse_relic_spawn_seconds = 25;
 
@@ -265,11 +265,11 @@ int second_last_digit(int value) {
 }
 
 int roll_player_hp() {
-    return active_roll_number + 100 + (rand() % 901);
+    return 240880 + 100 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
-    return last_two_digits(active_roll_number) + 50 + (rand() % 151);
+    return 80 + 50 + (rand() % 151);
 }
 
 int roll_enemy_speed() {
@@ -281,11 +281,11 @@ int roll_enemy_count() {
 }
 
 int player_damage_value() {
-    return last_digit(active_roll_number) + 10;
+    return game_state::player_base_damage;
 }
 
 int enemy_damage_value() {
-    return second_last_digit(active_roll_number) + 10;
+    return game_state::enemy_attack_damage;
 }
 
 void initialize_players() {
@@ -332,7 +332,7 @@ void initialize_enemies() {
 }
 
 bool initialize_seeded_stats() {
-    srand(static_cast<unsigned int>(active_roll_number));
+    srand(240880);
     if (!lock_state()) {
         return false;
     }
@@ -847,19 +847,9 @@ bool setup_shared_state() {
 }
 
 void parse_arguments(int argc, char **argv) {
-    if (argc >= 2) {
-        int parsed = atoi(argv[1]);
-        if (parsed > 0) {
-            active_roll_number = parsed;
-        }
-    }
-    const char *env_value = getenv("ROLL_NUMBER");
-    if (env_value != nullptr) {
-        int parsed = atoi(env_value);
-        if (parsed > 0) {
-            active_roll_number = parsed;
-        }
-    }
+    (void)argc;
+    (void)argv;
+    active_roll_number = 240880;
 }
 
 int main(int argc, char **argv) {
