@@ -84,7 +84,7 @@ if `hip` says shared memory not found, start `arbiter` first.
 - seeded stat initialization in arbiter
 - asynchronous enemy bot threads in asp
 - signal-driven ultimate flow (`sigstop`, `sigusr1`, `sigalrm`, `sigcont`)
-- stun timers for players and enemies
+- enemy stun updates player stun timers without stopping the hip process
 - inventory allocator with long-term storage swapping
 - ncurses windows for status, squad, enemies, inventory, and action log
 
@@ -96,6 +96,9 @@ if `hip` says shared memory not found, start `arbiter` first.
 - bots not moving:
   - check if ultimate freeze is active
   - verify `asp` process is running
+- `hip` shows `job has stopped` and returns to shell:
+  - this indicates a stop signal reached `hip`; rebuild latest and rerun
+  - start order must stay `arbiter` -> `asp` -> `hip`
 - full rebuild:
 
 ```bash
