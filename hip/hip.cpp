@@ -28,6 +28,7 @@ const int color_artifact = 6;
 const int color_empty_slot = 7;
 const int color_solar_slot = 8;
 const int color_lunar_slot = 9;
+const int color_weapon_slot = 10;
 const int player_turn_stamina = 100;
 const int enemy_stamina_cap = 150;
 const int player_base_damage = 10;
@@ -266,7 +267,7 @@ const char *weapon_name_from_id(int weapon_id) {
         return "solar_core";
     }
     if (weapon_id == game_state::lunar_blade_id) {
-        return "lunar_blnd";
+        return "lunar_blade";
     }
     return "unknown";
 }
@@ -282,7 +283,7 @@ const char *weapon_label_from_id(int weapon_id) {
         return "[solar_core]";
     }
     if (weapon_id == game_state::lunar_blade_id) {
-        return "[lunar_blnd]";
+        return "[lunar_blade]";
     }
     if (weapon_id == game_state::venom_dagger_id) {
         return "[venomdagr]";
@@ -304,15 +305,15 @@ int weapon_color_from_id(int weapon_id) {
         return color_lunar_slot;
     }
     if (weapon_id == game_state::splinter_stick_id) {
-        return color_player_hp;
+        return color_weapon_slot;
     }
     if (weapon_id == game_state::venom_dagger_id) {
-        return color_enemy_stamina;
+        return color_weapon_slot;
     }
     if (weapon_id == game_state::iron_halberd_id) {
-        return color_enemy_hp;
+        return color_weapon_slot;
     }
-    return color_artifact;
+    return color_weapon_slot;
 }
 
 int weapon_attr_from_id(int weapon_id) {
@@ -723,16 +724,16 @@ bool init_ncurses_ui() {
     nodelay(stdscr, TRUE);
     if (has_colors()) {
         start_color();
-        use_default_colors();
-        init_pair(color_border, COLOR_CYAN, -1);
-        init_pair(color_player_hp, COLOR_GREEN, -1);
-        init_pair(color_player_stamina, COLOR_YELLOW, -1);
-        init_pair(color_enemy_hp, COLOR_RED, -1);
-        init_pair(color_enemy_stamina, COLOR_MAGENTA, -1);
-        init_pair(color_artifact, COLOR_WHITE, -1);
-        init_pair(color_empty_slot, COLOR_BLACK, -1);
-        init_pair(color_solar_slot, COLOR_YELLOW, -1);
-        init_pair(color_lunar_slot, COLOR_CYAN, -1);
+        init_pair(color_border, COLOR_CYAN, COLOR_BLACK);
+        init_pair(color_player_hp, COLOR_GREEN, COLOR_BLACK);
+        init_pair(color_player_stamina, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(color_enemy_hp, COLOR_RED, COLOR_BLACK);
+        init_pair(color_enemy_stamina, COLOR_MAGENTA, COLOR_BLACK);
+        init_pair(color_artifact, COLOR_WHITE, COLOR_BLACK);
+        init_pair(color_empty_slot, COLOR_BLACK, COLOR_BLACK);
+        init_pair(color_solar_slot, COLOR_YELLOW, COLOR_BLACK);
+        init_pair(color_lunar_slot, COLOR_CYAN, COLOR_BLACK);
+        init_pair(color_weapon_slot, COLOR_MAGENTA, COLOR_BLACK);
     }
     if (!ensure_windows()) {
         return false;
@@ -868,7 +869,7 @@ void draw_enemies(const hip_snapshot *snapshot) {
             break;
         }
         int hp = clamp_value(snapshot->enemy_hp[i], 0, enemy_max_hp);
-        int st = clamp_value(snapshot->enemy_stamina[i], 0, max_stat_value);
+        int st = clamp_value(snapshot->enemy_stamina[i], 0, enemy_stamina_cap);
         int bar_width = (w - 20) / 2;
         if (bar_width < 5) {
             bar_width = 5;
@@ -876,7 +877,7 @@ void draw_enemies(const hip_snapshot *snapshot) {
         char hp_bar[64];
         char st_bar[64];
         draw_bar(hp_bar, sizeof(hp_bar), hp, enemy_max_hp, bar_width);
-        draw_bar(st_bar, sizeof(st_bar), st, max_stat_value, bar_width);
+        draw_bar(st_bar, sizeof(st_bar), st, enemy_stamina_cap, bar_width);
         mvwprintw(windows.enemies, row, 2, "e%d", i + 1);
         wattron(windows.enemies, COLOR_PAIR(color_enemy_hp));
         mvwprintw(windows.enemies, row, 6, "h%s", hp_bar);
@@ -918,15 +919,21 @@ void draw_inventory_grid(
             int weapon_id = slots[index];
             const char *label = weapon_label_from_id(weapon_id);
             int color_pair = weapon_color_from_id(weapon_id);
-            int attr = weapon_attr_from_id(weapon_id);
             int y = start_row + row;
             int x = start_col + col * col_width;
             if (y >= h - 1) {
                 continue;
             }
-            wattron(target, COLOR_PAIR(color_pair) | attr);
-            mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
-            wattroff(target, COLOR_PAIR(color_pair) | attr);
+            if (target == windows.inventory) {
+                wattron(windows.inventory, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
+                mvwprintw(windows.inventory, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
+                wattroff(windows.inventory, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
+            } else {
+                int attr = weapon_attr_from_id(weapon_id);
+                wattron(target, COLOR_PAIR(color_pair) | attr);
+                mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
+                wattroff(target, COLOR_PAIR(color_pair) | attr);
+            }
         }
     }
 }
