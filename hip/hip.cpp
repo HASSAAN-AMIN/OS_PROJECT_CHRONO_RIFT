@@ -62,6 +62,14 @@ const int pair_overlay_lose = 34;
 const int pair_overlay_quit = 35;
 const int pair_help = 36;
 const int pair_enemy_dead_purple = 37;
+const int pair_bg_canvas = 38;
+const int pair_bg_player = 39;
+const int pair_bg_arena = 40;
+const int pair_bg_enemy = 41;
+const int pair_bg_footer = 42;
+const int pair_title_player = 43;
+const int pair_title_enemy = 44;
+const int pair_title_arena = 45;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -809,6 +817,19 @@ void draw_double_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
     }
 }
 
+void paint_rect(int y, int x, int h, int w, int pair) {
+    if (h <= 0 || w <= 0) {
+        return;
+    }
+    attron(COLOR_PAIR(pair));
+    for (int yy = y; yy < y + h; ++yy) {
+        for (int xx = x; xx < x + w; ++xx) {
+            mvaddch(yy, xx, ' ');
+        }
+    }
+    attroff(COLOR_PAIR(pair));
+}
+
 void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, int extra_attr) {
     draw_box_at(y, x, h, w, pair, extra_attr);
     if (title == nullptr || w < 8) {
@@ -1028,7 +1049,7 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
 }
 
 void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "player squad", pair_panel_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "player squad", pair_title_player, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1057,7 +1078,7 @@ void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap)
 }
 
 void render_enemy_timeline_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "enemy timeline", pair_panel_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "enemy timeline", pair_title_enemy, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1174,7 +1195,7 @@ vector<int> build_enemy_render_slots(const world_snapshot &snap) {
 }
 
 void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "enemy forces", pair_panel_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "enemy forces", pair_title_enemy, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1270,7 +1291,7 @@ void render_banner(int y, int x, int w) {
 }
 
 void render_action_log_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "action log", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "action log", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1330,7 +1351,7 @@ void render_kill_counter(int y, int x, int w, const world_snapshot &snap) {
 }
 
 void render_system_status_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "system status", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "system status", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1394,7 +1415,7 @@ void render_system_status_box(int y, int x, int h, int w, const world_snapshot &
 }
 
 void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "artifact tracker", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "artifact tracker", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1466,7 +1487,7 @@ void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapsho
 }
 
 void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) {
-    draw_titled_box(y, x, h, w, "combat arena", pair_arena_title, A_BOLD);
+    draw_titled_box(y, x, h, w, "combat arena", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
@@ -1638,6 +1659,10 @@ void render_frame(const world_snapshot &snap) {
         right_w = (term_w - 24) - left_w;
     }
     center_w = term_w - left_w - right_w;
+    paint_rect(0, 0, main_h, left_w, pair_bg_player);
+    paint_rect(0, left_w, main_h, center_w, pair_bg_arena);
+    paint_rect(0, left_w + center_w, main_h, right_w, pair_bg_enemy);
+    paint_rect(term_h - 1, 0, 1, term_w, pair_bg_footer);
     render_player_panel(0, 0, main_h, left_w, snap);
     render_arena_panel(0, left_w, main_h, center_w, snap);
     render_enemy_panel(0, left_w + center_w, main_h, right_w, snap);
@@ -1796,43 +1821,51 @@ bool register_signals() {
 }
 
 void init_color_pairs() {
-    init_pair(pair_default, COLOR_WHITE, COLOR_BLACK);
-    init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_border_active, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_border_dead, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_hp_high, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_hp_med, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_hp_low, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_hp_critical, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_stamina, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_stamina_full, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_log, COLOR_WHITE, COLOR_BLACK);
-    init_pair(pair_status_ok, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_status_warn, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_artifact_solar, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_artifact_lunar, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_artifact_ground, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_command_bar, COLOR_BLACK, COLOR_WHITE);
+    init_pair(pair_default, COLOR_WHITE, COLOR_BLUE);
+    init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLUE);
+    init_pair(pair_border_active, COLOR_YELLOW, COLOR_BLUE);
+    init_pair(pair_border_dead, COLOR_RED, COLOR_MAGENTA);
+    init_pair(pair_hp_high, COLOR_GREEN, COLOR_BLUE);
+    init_pair(pair_hp_med, COLOR_YELLOW, COLOR_BLUE);
+    init_pair(pair_hp_low, COLOR_MAGENTA, COLOR_BLUE);
+    init_pair(pair_hp_critical, COLOR_RED, COLOR_BLUE);
+    init_pair(pair_stamina, COLOR_CYAN, COLOR_BLUE);
+    init_pair(pair_stamina_full, COLOR_GREEN, COLOR_BLUE);
+    init_pair(pair_log, COLOR_WHITE, COLOR_CYAN);
+    init_pair(pair_status_ok, COLOR_GREEN, COLOR_CYAN);
+    init_pair(pair_status_warn, COLOR_RED, COLOR_CYAN);
+    init_pair(pair_artifact_solar, COLOR_YELLOW, COLOR_CYAN);
+    init_pair(pair_artifact_lunar, COLOR_BLUE, COLOR_CYAN);
+    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, COLOR_CYAN);
+    init_pair(pair_artifact_ground, COLOR_WHITE, COLOR_CYAN);
+    init_pair(pair_command_bar, COLOR_WHITE, COLOR_MAGENTA);
     init_pair(pair_inv_empty, COLOR_BLACK, COLOR_BLACK);
     init_pair(pair_inv_splinter, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_inv_venom, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_inv_obsidian, COLOR_BLACK, COLOR_BLACK);
+    init_pair(pair_inv_obsidian, COLOR_WHITE, COLOR_BLACK);
     init_pair(pair_inv_frost, COLOR_BLUE, COLOR_BLACK);
     init_pair(pair_inv_thunder, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_inv_iron, COLOR_WHITE, COLOR_BLACK);
+    init_pair(pair_inv_iron, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_inv_solar, COLOR_YELLOW, COLOR_BLACK);
     init_pair(pair_inv_lunar, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_inv_eclipse, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_panel_title, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_arena_title, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_banner, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_kill_counter, COLOR_GREEN, COLOR_BLACK);
+    init_pair(pair_panel_title, COLOR_MAGENTA, COLOR_BLUE);
+    init_pair(pair_arena_title, COLOR_CYAN, COLOR_CYAN);
+    init_pair(pair_banner, COLOR_YELLOW, COLOR_CYAN);
+    init_pair(pair_kill_counter, COLOR_GREEN, COLOR_CYAN);
     init_pair(pair_overlay_win, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
     init_pair(pair_overlay_quit, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_help, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_enemy_dead_purple, COLOR_MAGENTA, COLOR_BLACK);
+    init_pair(pair_help, COLOR_WHITE, COLOR_BLUE);
+    init_pair(pair_enemy_dead_purple, COLOR_MAGENTA, COLOR_BLUE);
+    init_pair(pair_bg_canvas, COLOR_WHITE, COLOR_BLUE);
+    init_pair(pair_bg_player, COLOR_WHITE, COLOR_GREEN);
+    init_pair(pair_bg_arena, COLOR_WHITE, COLOR_CYAN);
+    init_pair(pair_bg_enemy, COLOR_WHITE, COLOR_MAGENTA);
+    init_pair(pair_bg_footer, COLOR_WHITE, COLOR_RED);
+    init_pair(pair_title_player, COLOR_YELLOW, COLOR_GREEN);
+    init_pair(pair_title_enemy, COLOR_YELLOW, COLOR_MAGENTA);
+    init_pair(pair_title_arena, COLOR_YELLOW, COLOR_CYAN);
 }
 
 bool init_tui() {
@@ -1850,7 +1883,7 @@ bool init_tui() {
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
     curs_set(0);
-    bkgd(COLOR_PAIR(pair_default));
+    bkgd(COLOR_PAIR(pair_bg_canvas));
     return true;
 }
 
