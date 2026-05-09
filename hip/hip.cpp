@@ -535,15 +535,15 @@ bool apply_ultimate_locked(int player_id) {
         );
         return true;
     }
+    shared_state->player_stamina[player_id] = 0;
     if (!unlock_memory()) {
         return true;
     }
     kill(asp_pid, SIGSTOP);
+    kill(arbiter_pid, SIGUSR1);
     if (!lock_memory()) {
         return false;
     }
-    kill(arbiter_pid, SIGUSR1);
-    shared_state->player_stamina[player_id] = 0;
     return true;
 }
 

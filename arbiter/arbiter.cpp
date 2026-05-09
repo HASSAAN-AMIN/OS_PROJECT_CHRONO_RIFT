@@ -29,7 +29,11 @@ volatile sig_atomic_t ultimate_triggered = 0;
 volatile sig_atomic_t ultimate_ended = 0;
 volatile sig_atomic_t stun_triggered = 0;
 volatile sig_atomic_t stun_ended = 0;
-volatile sig_atomic_t alarm_mode = 0;
+volatile sig_atomic_t asp_frozen = 0;
+volatile sig_atomic_t hip_frozen = 0;
+volatile sig_atomic_t ultimate_alarm_pending = 0;
+volatile sig_atomic_t stun_alarm_pending = 0;
+volatile sig_atomic_t deadlock_broken = 0;
 
 void print_errno(const char *action) {
     fprintf(stderr, "%s: %s\n", action, strerror(errno));
@@ -253,15 +257,6 @@ bool tick_stamina_progression() {
     if (!lock_state()) {
         return false;
     }
-    update_player_stamina();
-    update_enemy_stamina();
-    if (!unlock_state()) {
-        return false;
-    }
-    return true;
-}
-
-void process_signal_logs() {
     if (ultimate_triggered) {
         ultimate_triggered = 0;
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered! asp frozen for 10s");
@@ -278,11 +273,20 @@ void process_signal_logs() {
         stun_ended = 0;
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun ended, entities resumed");
     }
+    if (deadlock_broken) {
+        deadlock_broken = 0;
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock broken by arbiter");
+    }
+    update_player_stamina();
+    update_enemy_stamina();
+    if (!unlock_state()) {
+        return false;
+    }
+    return true;
 }
 
 void run_stamina_loop() {
     while (true) {
-        process_signal_logs();
         sleep(1);
         if (!tick_stamina_progression()) {
             break;
@@ -291,36 +295,46 @@ void run_stamina_loop() {
 }
 
 void handle_alarm_signal(int) {
-    if (alarm_mode == 1) {
+    if (asp_frozen) {
         pid_t asp_pid = shared_state->asp_pid;
         if (asp_pid > 0) {
             kill(asp_pid, SIGCONT);
         }
-        ultimate_ended = 1;
-    } else if (alarm_mode == 2) {
-        pid_t asp_pid = shared_state->asp_pid;
+        asp_frozen = 0;
+    }
+    if (hip_frozen) {
         pid_t hip_pid = shared_state->hip_pid;
-        if (asp_pid > 0) {
-            kill(asp_pid, SIGCONT);
-        }
         if (hip_pid > 0) {
             kill(hip_pid, SIGCONT);
         }
+        hip_frozen = 0;
+    }
+    if (ultimate_alarm_pending) {
+        ultimate_alarm_pending = 0;
+        ultimate_ended = 1;
+    }
+    if (stun_alarm_pending) {
+        stun_alarm_pending = 0;
         stun_ended = 1;
     }
-    alarm_mode = 0;
 }
 
 void handle_ultimate_signal(int) {
-    alarm_mode = 1;
+    asp_frozen = 1;
+    hip_frozen = 0;
     alarm(10);
     ultimate_triggered = 1;
+    ultimate_alarm_pending = 1;
+    stun_alarm_pending = 0;
 }
 
 void handle_stun_signal(int) {
-    alarm_mode = 2;
+    asp_frozen = 1;
+    hip_frozen = 1;
     alarm(3);
     stun_triggered = 1;
+    stun_alarm_pending = 1;
+    ultimate_alarm_pending = 0;
 }
 
 bool register_arbiter_pid() {
@@ -369,7 +383,7 @@ void break_deadlock_locked() {
     } else {
         shared_state->solar_core_holder = -1;
     }
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock broken by arbiter");
+    deadlock_broken = 1;
 }
 
 void *deadlock_monitor_loop(void *) {
