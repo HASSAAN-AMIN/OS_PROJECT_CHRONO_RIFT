@@ -59,6 +59,7 @@ const int pair_overlay_win = 33;
 const int pair_overlay_lose = 34;
 const int pair_overlay_quit = 35;
 const int pair_help = 36;
+const int pair_enemy_dead_purple = 37;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -1236,12 +1237,118 @@ void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap)
     }
 }
 
+void render_enemy_timeline_box(int y, int x, int h, int w, const world_snapshot &snap) {
+    draw_titled_box(y, x, h, w, "enemy timeline", pair_panel_title, A_BOLD);
+    int inner_y = y + 1;
+    int inner_x = x + 1;
+    int inner_w = w - 2;
+    int inner_h = h - 2;
+    if (inner_h < 2 || inner_w < 20) {
+        return;
+    }
+    int slots = game_state::kills_required_to_win;
+    int cols = 5;
+    int rows = (slots + cols - 1) / cols;
+    int cell_h = inner_h / rows;
+    if (cell_h < 2) {
+        cell_h = 2;
+    }
+    int cell_w = inner_w / cols;
+    if (cell_w < 6) {
+        cell_w = 6;
+    }
+    for (int id = 1; id <= slots; ++id) {
+        int idx = id - 1;
+        int row = idx / cols;
+        int col = idx % cols;
+        int sy = inner_y + row * cell_h;
+        int sx = inner_x + col * cell_w;
+        int sh = cell_h;
+        int sw = cell_w;
+        if (sy + sh > inner_y + inner_h) {
+            sh = inner_y + inner_h - sy;
+        }
+        if (sx + sw > inner_x + inner_w) {
+            sw = inner_x + inner_w - sx;
+        }
+        if (sh < 2 || sw < 4) {
+            continue;
+        }
+        bool alive = false;
+        int alive_idx = -1;
+        for (int i = 0; i < snap.active_enemy_count && i < game_state::max_enemies; ++i) {
+            if (snap.enemy_display_id[i] == id && snap.enemies[i].hp > 0) {
+                alive = true;
+                alive_idx = i;
+                break;
+            }
+        }
+        bool dead = false;
+        if (!alive) {
+            if (id <= snap.total_kills) {
+                dead = true;
+            } else {
+                for (int i = 0; i < snap.active_enemy_count && i < game_state::max_enemies; ++i) {
+                    if (snap.enemy_display_id[i] > id) {
+                        dead = true;
+                        break;
+                    }
+                }
+            }
+        }
+        int pair = pair_border_normal;
+        int attr = A_BOLD;
+        if (alive) {
+            pair = pair_border_active;
+        } else if (dead) {
+            pair = pair_enemy_dead_purple;
+        }
+        draw_box_at(sy, sx, sh, sw, pair, attr);
+        if (sw >= 6) {
+            attron(COLOR_PAIR(pair) | A_BOLD);
+            mvprintw(sy, sx + 1, "E%d", id);
+            attroff(COLOR_PAIR(pair) | A_BOLD);
+        }
+        if (sh >= 3 && sw >= 8) {
+            if (alive && alive_idx >= 0) {
+                attron(COLOR_PAIR(pair_border_active) | A_BOLD);
+                mvprintw(sy + 1, sx + 1, "hp %d", snap.enemies[alive_idx].hp);
+                attroff(COLOR_PAIR(pair_border_active) | A_BOLD);
+            } else if (dead) {
+                attron(COLOR_PAIR(pair_enemy_dead_purple) | A_BOLD);
+                mvprintw(sy + 1, sx + 1, "dead");
+                attroff(COLOR_PAIR(pair_enemy_dead_purple) | A_BOLD);
+            } else {
+                attron(COLOR_PAIR(pair_default));
+                mvprintw(sy + 1, sx + 1, "spawn");
+                attroff(COLOR_PAIR(pair_default));
+            }
+        }
+    }
+}
+
 void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) {
     draw_titled_box(y, x, h, w, "enemy forces", pair_panel_title, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
     int inner_w = w - 2;
     int inner_h = h - 2;
+    int timeline_h = 7;
+    if (inner_h < 16) {
+        timeline_h = 5;
+    }
+    if (timeline_h > inner_h - 4) {
+        timeline_h = inner_h / 2;
+    }
+    if (timeline_h < 4) {
+        timeline_h = 4;
+    }
+    render_enemy_timeline_box(inner_y, inner_x, timeline_h, inner_w, snap);
+    int detail_y = inner_y + timeline_h;
+    int detail_h = inner_h - timeline_h;
+    if (detail_h < 4) {
+        return;
+    }
     int active = snap.active_enemy_count;
     if (active <= 0) {
         active = 1;
@@ -1261,7 +1368,7 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     if (rows <= 0) {
         rows = 1;
     }
-    int per_h = inner_h / rows;
+    int per_h = detail_h / rows;
     if (per_h < 4) {
         per_h = 4;
     }
@@ -1270,9 +1377,9 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     for (int i = 0; i < active; ++i) {
         int col = i % columns;
         int row = i / columns;
-        int box_y = inner_y + row * per_h;
+        int box_y = detail_y + row * per_h;
         int box_x = inner_x + col * per_w;
-        if (box_y + per_h > inner_y + inner_h) {
+        if (box_y + per_h > detail_y + detail_h) {
             break;
         }
         int eid = snap.enemy_display_id[i];
@@ -1877,6 +1984,7 @@ void init_color_pairs() {
     init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
     init_pair(pair_overlay_quit, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_help, COLOR_CYAN, COLOR_BLACK);
+    init_pair(pair_enemy_dead_purple, COLOR_MAGENTA, COLOR_BLACK);
 }
 
 bool init_tui() {
