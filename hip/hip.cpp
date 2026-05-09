@@ -74,6 +74,7 @@ volatile sig_atomic_t full_redraw_requested = 0;
 pthread_t render_thread;
 pthread_t input_thread;
 bool ncurses_ready = false;
+bool endwin_called = false;
 window_set windows = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0};
 pthread_mutex_t ncurses_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -730,7 +731,7 @@ bool init_ncurses_ui() {
         init_pair(color_enemy_hp, COLOR_RED, COLOR_BLACK);
         init_pair(color_enemy_stamina, COLOR_MAGENTA, COLOR_BLACK);
         init_pair(color_artifact, COLOR_WHITE, COLOR_BLACK);
-        init_pair(color_empty_slot, COLOR_BLACK, COLOR_BLACK);
+        init_pair(color_empty_slot, COLOR_WHITE, COLOR_BLACK);
         init_pair(color_solar_slot, COLOR_YELLOW, COLOR_BLACK);
         init_pair(color_lunar_slot, COLOR_CYAN, COLOR_BLACK);
         init_pair(color_weapon_slot, COLOR_MAGENTA, COLOR_BLACK);
@@ -746,12 +747,15 @@ bool init_ncurses_ui() {
 
 void shutdown_ncurses_ui() {
     pthread_mutex_lock(&ncurses_lock);
-    if (!ncurses_ready) {
+    if (endwin_called) {
         pthread_mutex_unlock(&ncurses_lock);
         return;
     }
-    destroy_windows();
-    endwin();
+    if (ncurses_ready) {
+        destroy_windows();
+        endwin();
+    }
+    endwin_called = true;
     ncurses_ready = false;
     pthread_mutex_unlock(&ncurses_lock);
 }
@@ -819,9 +823,9 @@ void draw_stat_line(
     int clean = clamp_value(value, 0, max_value);
     char bar[128];
     draw_bar(bar, sizeof(bar), clean, max_value, safe_width);
-    wattron(target, COLOR_PAIR(color_pair_id));
+    wattron(target, COLOR_PAIR(color_pair_id) | A_BOLD);
     mvwprintw(target, row, 2, "%s %3d/%3d %s", label, clean, max_value, bar);
-    wattroff(target, COLOR_PAIR(color_pair_id));
+    wattroff(target, COLOR_PAIR(color_pair_id) | A_BOLD);
 }
 
 void draw_system_status(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -878,13 +882,15 @@ void draw_enemies(const hip_snapshot *snapshot) {
         char st_bar[64];
         draw_bar(hp_bar, sizeof(hp_bar), hp, enemy_max_hp, bar_width);
         draw_bar(st_bar, sizeof(st_bar), st, enemy_stamina_cap, bar_width);
+        wattron(windows.enemies, A_BOLD);
         mvwprintw(windows.enemies, row, 2, "e%d", i + 1);
-        wattron(windows.enemies, COLOR_PAIR(color_enemy_hp));
+        wattroff(windows.enemies, A_BOLD);
+        wattron(windows.enemies, COLOR_PAIR(color_enemy_hp) | A_BOLD);
         mvwprintw(windows.enemies, row, 6, "h%s", hp_bar);
-        wattroff(windows.enemies, COLOR_PAIR(color_enemy_hp));
-        wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina));
+        wattroff(windows.enemies, COLOR_PAIR(color_enemy_hp) | A_BOLD);
+        wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
         mvwprintw(windows.enemies, row, 8 + static_cast<int>(strlen(hp_bar)), "s%s", st_bar);
-        wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina));
+        wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
         row++;
     }
 }
