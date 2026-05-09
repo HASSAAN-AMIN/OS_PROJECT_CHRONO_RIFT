@@ -1821,24 +1821,42 @@ bool register_signals() {
 }
 
 void init_color_pairs() {
-    init_pair(pair_default, COLOR_WHITE, COLOR_BLUE);
-    init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLUE);
-    init_pair(pair_border_active, COLOR_YELLOW, COLOR_BLUE);
-    init_pair(pair_border_dead, COLOR_RED, COLOR_MAGENTA);
-    init_pair(pair_hp_high, COLOR_GREEN, COLOR_BLUE);
-    init_pair(pair_hp_med, COLOR_YELLOW, COLOR_BLUE);
-    init_pair(pair_hp_low, COLOR_MAGENTA, COLOR_BLUE);
-    init_pair(pair_hp_critical, COLOR_RED, COLOR_BLUE);
-    init_pair(pair_stamina, COLOR_CYAN, COLOR_BLUE);
-    init_pair(pair_stamina_full, COLOR_GREEN, COLOR_BLUE);
-    init_pair(pair_log, COLOR_WHITE, COLOR_CYAN);
-    init_pair(pair_status_ok, COLOR_GREEN, COLOR_CYAN);
-    init_pair(pair_status_warn, COLOR_RED, COLOR_CYAN);
-    init_pair(pair_artifact_solar, COLOR_YELLOW, COLOR_CYAN);
-    init_pair(pair_artifact_lunar, COLOR_BLUE, COLOR_CYAN);
-    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, COLOR_CYAN);
-    init_pair(pair_artifact_ground, COLOR_WHITE, COLOR_CYAN);
-    init_pair(pair_command_bar, COLOR_WHITE, COLOR_MAGENTA);
+    int c_canvas = COLOR_BLACK;
+    int c_player_bg = COLOR_BLUE;
+    int c_arena_bg = COLOR_BLACK;
+    int c_enemy_bg = COLOR_BLACK;
+    int c_footer_bg = COLOR_BLACK;
+    if (can_change_color()) {
+        c_canvas = 16;
+        c_player_bg = 17;
+        c_arena_bg = 18;
+        c_enemy_bg = 19;
+        c_footer_bg = 20;
+        init_color(c_canvas, 35, 35, 60);
+        init_color(c_player_bg, 30, 80, 180);
+        init_color(c_arena_bg, 20, 95, 95);
+        init_color(c_enemy_bg, 90, 25, 120);
+        init_color(c_footer_bg, 60, 30, 85);
+    }
+
+    init_pair(pair_default, COLOR_WHITE, -1);
+    init_pair(pair_border_normal, COLOR_CYAN, -1);
+    init_pair(pair_border_active, COLOR_YELLOW, -1);
+    init_pair(pair_border_dead, COLOR_RED, -1);
+    init_pair(pair_hp_high, COLOR_GREEN, -1);
+    init_pair(pair_hp_med, COLOR_YELLOW, -1);
+    init_pair(pair_hp_low, COLOR_MAGENTA, -1);
+    init_pair(pair_hp_critical, COLOR_RED, -1);
+    init_pair(pair_stamina, COLOR_CYAN, -1);
+    init_pair(pair_stamina_full, COLOR_GREEN, -1);
+    init_pair(pair_log, COLOR_WHITE, -1);
+    init_pair(pair_status_ok, COLOR_GREEN, -1);
+    init_pair(pair_status_warn, COLOR_RED, -1);
+    init_pair(pair_artifact_solar, COLOR_YELLOW, -1);
+    init_pair(pair_artifact_lunar, COLOR_CYAN, -1);
+    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, -1);
+    init_pair(pair_artifact_ground, COLOR_WHITE, -1);
+    init_pair(pair_command_bar, COLOR_WHITE, c_footer_bg);
     init_pair(pair_inv_empty, COLOR_BLACK, COLOR_BLACK);
     init_pair(pair_inv_splinter, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_inv_venom, COLOR_MAGENTA, COLOR_BLACK);
@@ -1849,23 +1867,23 @@ void init_color_pairs() {
     init_pair(pair_inv_solar, COLOR_YELLOW, COLOR_BLACK);
     init_pair(pair_inv_lunar, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_inv_eclipse, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_panel_title, COLOR_MAGENTA, COLOR_BLUE);
-    init_pair(pair_arena_title, COLOR_CYAN, COLOR_CYAN);
-    init_pair(pair_banner, COLOR_YELLOW, COLOR_CYAN);
-    init_pair(pair_kill_counter, COLOR_GREEN, COLOR_CYAN);
+    init_pair(pair_panel_title, COLOR_MAGENTA, -1);
+    init_pair(pair_arena_title, COLOR_CYAN, -1);
+    init_pair(pair_banner, COLOR_YELLOW, -1);
+    init_pair(pair_kill_counter, COLOR_GREEN, -1);
     init_pair(pair_overlay_win, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
     init_pair(pair_overlay_quit, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_help, COLOR_WHITE, COLOR_BLUE);
-    init_pair(pair_enemy_dead_purple, COLOR_MAGENTA, COLOR_BLUE);
-    init_pair(pair_bg_canvas, COLOR_WHITE, COLOR_BLUE);
-    init_pair(pair_bg_player, COLOR_WHITE, COLOR_GREEN);
-    init_pair(pair_bg_arena, COLOR_WHITE, COLOR_CYAN);
-    init_pair(pair_bg_enemy, COLOR_WHITE, COLOR_MAGENTA);
-    init_pair(pair_bg_footer, COLOR_WHITE, COLOR_RED);
-    init_pair(pair_title_player, COLOR_YELLOW, COLOR_GREEN);
-    init_pair(pair_title_enemy, COLOR_YELLOW, COLOR_MAGENTA);
-    init_pair(pair_title_arena, COLOR_YELLOW, COLOR_CYAN);
+    init_pair(pair_help, COLOR_WHITE, c_canvas);
+    init_pair(pair_enemy_dead_purple, COLOR_MAGENTA, -1);
+    init_pair(pair_bg_canvas, COLOR_WHITE, c_canvas);
+    init_pair(pair_bg_player, COLOR_WHITE, c_player_bg);
+    init_pair(pair_bg_arena, COLOR_WHITE, c_arena_bg);
+    init_pair(pair_bg_enemy, COLOR_WHITE, c_enemy_bg);
+    init_pair(pair_bg_footer, COLOR_WHITE, c_footer_bg);
+    init_pair(pair_title_player, COLOR_YELLOW, c_player_bg);
+    init_pair(pair_title_enemy, COLOR_YELLOW, c_enemy_bg);
+    init_pair(pair_title_arena, COLOR_YELLOW, c_arena_bg);
 }
 
 bool init_tui() {
