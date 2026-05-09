@@ -16,7 +16,7 @@
 using namespace std;
 
 const char *shared_memory_name = "/chrono_rift_game_state";
-const int default_roll_number = 240880;
+const int default_roll_number = 22000880;
 const useconds_t deadlock_check_sleep_us = 2000000;
 const int eclipse_relic_spawn_seconds = 25;
 
@@ -168,7 +168,6 @@ void clear_state() {
     shared_state->active_enemy_count = 0;
     shared_state->active_player_index = -1;
     shared_state->enemy_kills = 0;
-    shared_state->total_kills = 0;
     shared_state->outcome = game_state::outcome_ongoing;
     shared_state->roll_number = active_roll_number;
     shared_state->arbiter_pid = 0;
@@ -219,14 +218,7 @@ bool is_active_enemy(int index) {
 }
 
 void update_player_stamina() {
-    int player_count = shared_state->active_player_count;
-    if (player_count < 0) {
-        player_count = 0;
-    }
-    if (player_count > game_state::max_players) {
-        player_count = game_state::max_players;
-    }
-    for (int i = 0; i < player_count; ++i) {
+    for (int i = 0; i < game_state::max_players; ++i) {
         if (!is_active_player(i)) {
             continue;
         }
@@ -239,14 +231,7 @@ void update_player_stamina() {
 }
 
 void update_enemy_stamina() {
-    int enemy_count = shared_state->active_enemy_count;
-    if (enemy_count < 0) {
-        enemy_count = 0;
-    }
-    if (enemy_count > game_state::max_enemies) {
-        enemy_count = game_state::max_enemies;
-    }
-    for (int i = 0; i < enemy_count; ++i) {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
         if (!is_active_enemy(i)) {
             continue;
         }
@@ -280,11 +265,11 @@ int second_last_digit(int value) {
 }
 
 int roll_player_hp() {
-    return 880 + (rand() % 901);
+    return active_roll_number + 100 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
-    return 80 + 50 + (rand() % 151);
+    return last_two_digits(active_roll_number) + 50 + (rand() % 151);
 }
 
 int roll_enemy_speed() {
@@ -304,32 +289,18 @@ int enemy_damage_value() {
 }
 
 void initialize_players() {
-    int player_count = shared_state->active_player_count;
-    if (player_count <= 0 || player_count > game_state::max_players) {
-        player_count = game_state::max_players;
-    }
-    int per_player_speed = 100 / player_count;
+    int per_player_speed = 100 / game_state::max_players;
     if (per_player_speed < 1) {
         per_player_speed = 1;
     }
     for (int i = 0; i < game_state::max_players; ++i) {
-        if (i < player_count) {
-            shared_state->player_hp[i] = roll_player_hp();
-            shared_state->player_max_hp[i] = shared_state->player_hp[i];
-            shared_state->player_speed[i] = per_player_speed;
-            shared_state->player_stamina[i] = 0;
-            shared_state->player_damage[i] = player_damage_value();
-        } else {
-            shared_state->player_hp[i] = 0;
-            shared_state->player_max_hp[i] = 0;
-            shared_state->player_speed[i] = 0;
-            shared_state->player_stamina[i] = 0;
-            shared_state->player_damage[i] = 0;
-        }
+        shared_state->player_hp[i] = roll_player_hp();
+        shared_state->player_max_hp[i] = shared_state->player_hp[i];
+        shared_state->player_speed[i] = per_player_speed;
+        shared_state->player_stamina[i] = 0;
+        shared_state->player_damage[i] = player_damage_value();
     }
-    if (shared_state->active_player_count <= 0) {
-        shared_state->active_player_count = player_count;
-    }
+    shared_state->active_player_count = game_state::max_players;
 }
 
 void initialize_enemies() {
@@ -361,7 +332,7 @@ void initialize_enemies() {
 }
 
 bool initialize_seeded_stats() {
-    srand(240880);
+    srand(static_cast<unsigned int>(active_roll_number));
     if (!lock_state()) {
         return false;
     }
@@ -451,46 +422,32 @@ void schedule_next_alarm_locked(time_t now) {
 }
 
 void track_enemy_deaths_locked() {
-    int enemy_count = shared_state->active_enemy_count;
-    if (enemy_count < 0) {
-        enemy_count = 0;
-    }
-    if (enemy_count > game_state::max_enemies) {
-        enemy_count = game_state::max_enemies;
-    }
-    for (int i = 0; i < enemy_count; ++i) {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (i >= shared_state->active_enemy_count) {
+            previous_enemy_hp[i] = shared_state->enemy_hp[i];
+            continue;
+        }
         int prev = previous_enemy_hp[i];
         int curr = shared_state->enemy_hp[i];
         if (prev > 0 && curr <= 0) {
-            shared_state->total_kills += 1;
-            shared_state->enemy_kills = shared_state->total_kills;
-            if (shared_state->total_kills >= 10) {
-                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "VICTORY: 10 enemies defeated!");
-                shared_state->outcome = game_state::outcome_win;
-                arbiter_running = 0;
-            } else {
-                shared_state->enemy_hp[i] = roll_enemy_hp();
-                shared_state->enemy_max_hp[i] = shared_state->enemy_hp[i];
-                shared_state->enemy_stamina[i] = 0;
-                shared_state->stun_end_time[i] = 0;
-                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "enemy respawned");
-            }
+            shared_state->enemy_kills += 1;
+            snprintf(
+                shared_state->action_log, sizeof(shared_state->action_log),
+                "enemy %d eliminated (%d/%d kills)",
+                i + 1,
+                shared_state->enemy_kills,
+                game_state::kills_required_to_win
+            );
+            snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_%d_died", i + 1);
         }
-        previous_enemy_hp[i] = shared_state->enemy_hp[i];
+        previous_enemy_hp[i] = curr;
     }
 }
 
 void update_active_player_locked() {
     int chosen = -1;
     int best_stamina = -1;
-    int player_count = shared_state->active_player_count;
-    if (player_count < 0) {
-        player_count = 0;
-    }
-    if (player_count > game_state::max_players) {
-        player_count = game_state::max_players;
-    }
-    for (int i = 0; i < player_count; ++i) {
+    for (int i = 0; i < game_state::max_players; ++i) {
         if (shared_state->player_hp[i] <= 0) {
             continue;
         }
@@ -504,7 +461,7 @@ void update_active_player_locked() {
         }
     }
     if (chosen < 0) {
-        for (int i = 0; i < player_count; ++i) {
+        for (int i = 0; i < game_state::max_players; ++i) {
             if (shared_state->player_hp[i] > 0) {
                 chosen = i;
                 break;

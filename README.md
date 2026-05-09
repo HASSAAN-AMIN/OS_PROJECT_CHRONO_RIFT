@@ -43,10 +43,10 @@ start one terminal per process from project root.
 terminal 1 (game arbiter, takes roll number as cmdline arg):
 
 ```bash
-./judge 240880
+./judge 22000880
 ```
 
-if no roll number is passed it falls back to `ROLL_NUMBER` env var or the default `240880`.
+if no roll number is passed it falls back to `ROLL_NUMBER` env var or the default `22000880`.
 
 terminal 2 (asp, no args):
 
