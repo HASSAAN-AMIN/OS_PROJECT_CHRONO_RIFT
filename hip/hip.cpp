@@ -70,6 +70,17 @@ const int pair_bg_footer = 42;
 const int pair_title_player = 43;
 const int pair_title_enemy = 44;
 const int pair_title_arena = 45;
+const int pair_bg_player_box = 46;
+const int pair_bg_enemy_box = 47;
+const int pair_bg_timeline = 48;
+const int pair_bg_log = 49;
+const int pair_bg_status = 50;
+const int pair_bg_artifact = 51;
+const int pair_bg_banner_1 = 52;
+const int pair_bg_banner_2 = 53;
+const int pair_bg_banner_3 = 54;
+const int pair_bg_banner_4 = 55;
+const int pair_bg_banner_5 = 56;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -961,6 +972,11 @@ void draw_inventory_strip(int y, int x, int width, const int *inventory, bool de
 }
 
 void render_entity(int y, int x, int h, int w, const char *title, const entity_snapshot &es, bool is_player) {
+    int body_pair = is_player ? pair_bg_player_box : pair_bg_enemy_box;
+    if (es.dead) {
+        body_pair = pair_enemy_dead_purple;
+    }
+    paint_rect(y + 1, x + 1, h - 2, w - 2, body_pair);
     int border_pair = pair_border_normal;
     int border_extra = 0;
     if (es.dead) {
@@ -1049,6 +1065,7 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
 }
 
 void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_player);
     draw_titled_box(y, x, h, w, "player squad", pair_title_player, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
@@ -1078,6 +1095,7 @@ void render_player_panel(int y, int x, int h, int w, const world_snapshot &snap)
 }
 
 void render_enemy_timeline_box(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_timeline);
     draw_titled_box(y, x, h, w, "enemy timeline", pair_title_enemy, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
@@ -1195,6 +1213,7 @@ vector<int> build_enemy_render_slots(const world_snapshot &snap) {
 }
 
 void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_enemy);
     draw_titled_box(y, x, h, w, "enemy forces", pair_title_enemy, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
@@ -1262,13 +1281,15 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
 }
 
 void render_banner(int y, int x, int w) {
+    int rainbow_pairs[5] = {pair_bg_banner_1, pair_bg_banner_2, pair_bg_banner_3, pair_bg_banner_4, pair_bg_banner_5};
     if (w < 60) {
-        attron(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
+        paint_rect(y, x, 1, w, pair_bg_banner_3);
+        attron(COLOR_PAIR(pair_banner) | A_BOLD);
         const char *short_title = "  CHRONO RIFT  ";
         int len = (int)strlen(short_title);
         int sx = x + (w - len) / 2;
         mvprintw(y, sx, "%s", short_title);
-        attroff(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
+        attroff(COLOR_PAIR(pair_banner) | A_BOLD);
         return;
     }
     const char *line1 = "  ____ _   _ ____   ___  _   _  ___    ____  ___ _____ _____ ";
@@ -1283,14 +1304,16 @@ void render_banner(int y, int x, int w) {
     if (sx < x + 1) {
         sx = x + 1;
     }
-    attron(COLOR_PAIR(pair_banner) | A_BOLD);
     for (int i = 0; i < line_count; ++i) {
+        paint_rect(y + i, x, 1, w, rainbow_pairs[i]);
+        attron(COLOR_PAIR(pair_banner) | A_BOLD);
         mvprintw(y + i, sx, "%.*s", w - 2, lines[i]);
+        attroff(COLOR_PAIR(pair_banner) | A_BOLD);
     }
-    attroff(COLOR_PAIR(pair_banner) | A_BOLD);
 }
 
 void render_action_log_box(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_log);
     draw_titled_box(y, x, h, w, "action log", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
@@ -1351,6 +1374,7 @@ void render_kill_counter(int y, int x, int w, const world_snapshot &snap) {
 }
 
 void render_system_status_box(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_status);
     draw_titled_box(y, x, h, w, "system status", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
@@ -1415,6 +1439,7 @@ void render_system_status_box(int y, int x, int h, int w, const world_snapshot &
 }
 
 void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_artifact);
     draw_titled_box(y, x, h, w, "artifact tracker", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 2;
@@ -1487,6 +1512,7 @@ void render_artifact_tracker_box(int y, int x, int h, int w, const world_snapsho
 }
 
 void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) {
+    paint_rect(y, x, h, w, pair_bg_arena);
     draw_titled_box(y, x, h, w, "combat arena", pair_title_arena, A_BOLD);
     int inner_y = y + 1;
     int inner_x = x + 1;
@@ -1826,17 +1852,50 @@ void init_color_pairs() {
     int c_arena_bg = COLOR_BLACK;
     int c_enemy_bg = COLOR_BLACK;
     int c_footer_bg = COLOR_BLACK;
+    int c_player_box_bg = COLOR_BLACK;
+    int c_enemy_box_bg = COLOR_BLACK;
+    int c_timeline_bg = COLOR_BLACK;
+    int c_log_bg = COLOR_BLACK;
+    int c_status_bg = COLOR_BLACK;
+    int c_artifact_bg = COLOR_BLACK;
+    int c_banner_1 = COLOR_RED;
+    int c_banner_2 = COLOR_YELLOW;
+    int c_banner_3 = COLOR_GREEN;
+    int c_banner_4 = COLOR_CYAN;
+    int c_banner_5 = COLOR_MAGENTA;
     if (can_change_color()) {
         c_canvas = 16;
         c_player_bg = 17;
         c_arena_bg = 18;
         c_enemy_bg = 19;
         c_footer_bg = 20;
+        c_player_box_bg = 21;
+        c_enemy_box_bg = 22;
+        c_timeline_bg = 23;
+        c_log_bg = 24;
+        c_status_bg = 25;
+        c_artifact_bg = 26;
+        c_banner_1 = 27;
+        c_banner_2 = 28;
+        c_banner_3 = 29;
+        c_banner_4 = 30;
+        c_banner_5 = 31;
         init_color(c_canvas, 35, 35, 60);
-        init_color(c_player_bg, 30, 80, 180);
-        init_color(c_arena_bg, 20, 95, 95);
-        init_color(c_enemy_bg, 90, 25, 120);
-        init_color(c_footer_bg, 60, 30, 85);
+        init_color(c_player_bg, 25, 55, 95);
+        init_color(c_arena_bg, 22, 55, 52);
+        init_color(c_enemy_bg, 42, 25, 75);
+        init_color(c_footer_bg, 45, 20, 65);
+        init_color(c_player_box_bg, 15, 38, 68);
+        init_color(c_enemy_box_bg, 28, 18, 52);
+        init_color(c_timeline_bg, 18, 15, 42);
+        init_color(c_log_bg, 14, 33, 34);
+        init_color(c_status_bg, 15, 26, 44);
+        init_color(c_artifact_bg, 14, 24, 36);
+        init_color(c_banner_1, 90, 22, 22);
+        init_color(c_banner_2, 90, 55, 18);
+        init_color(c_banner_3, 28, 70, 24);
+        init_color(c_banner_4, 20, 55, 88);
+        init_color(c_banner_5, 62, 20, 90);
     }
 
     init_pair(pair_default, COLOR_WHITE, -1);
@@ -1869,7 +1928,7 @@ void init_color_pairs() {
     init_pair(pair_inv_eclipse, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(pair_panel_title, COLOR_MAGENTA, -1);
     init_pair(pair_arena_title, COLOR_CYAN, -1);
-    init_pair(pair_banner, COLOR_YELLOW, -1);
+    init_pair(pair_banner, COLOR_WHITE, -1);
     init_pair(pair_kill_counter, COLOR_GREEN, -1);
     init_pair(pair_overlay_win, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
@@ -1884,6 +1943,17 @@ void init_color_pairs() {
     init_pair(pair_title_player, COLOR_YELLOW, c_player_bg);
     init_pair(pair_title_enemy, COLOR_YELLOW, c_enemy_bg);
     init_pair(pair_title_arena, COLOR_YELLOW, c_arena_bg);
+    init_pair(pair_bg_player_box, COLOR_WHITE, c_player_box_bg);
+    init_pair(pair_bg_enemy_box, COLOR_WHITE, c_enemy_box_bg);
+    init_pair(pair_bg_timeline, COLOR_WHITE, c_timeline_bg);
+    init_pair(pair_bg_log, COLOR_WHITE, c_log_bg);
+    init_pair(pair_bg_status, COLOR_WHITE, c_status_bg);
+    init_pair(pair_bg_artifact, COLOR_WHITE, c_artifact_bg);
+    init_pair(pair_bg_banner_1, COLOR_WHITE, c_banner_1);
+    init_pair(pair_bg_banner_2, COLOR_WHITE, c_banner_2);
+    init_pair(pair_bg_banner_3, COLOR_WHITE, c_banner_3);
+    init_pair(pair_bg_banner_4, COLOR_WHITE, c_banner_4);
+    init_pair(pair_bg_banner_5, COLOR_WHITE, c_banner_5);
 }
 
 bool init_tui() {
