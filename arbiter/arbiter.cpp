@@ -26,6 +26,8 @@ game_state *shared_state = nullptr;
 bool semaphores_ready = false;
 bool resource_lock_ready = false;
 pthread_t deadlock_monitor_thread;
+bool deadlock_monitor_started = false;
+volatile sig_atomic_t arbiter_running = 1;
 volatile sig_atomic_t ultimate_triggered = 0;
 volatile sig_atomic_t ultimate_ended = 0;
 volatile sig_atomic_t stun_triggered = 0;
@@ -145,7 +147,7 @@ void clear_state() {
         shared_state->enemy_stamina[i] = 0;
         shared_state->stun_end_time[i] = 0;
     }
-    shared_state->eclipse_relic_holder = 0;
+    shared_state->eclipse_relic_holder = -1;
     shared_state->solar_core_holder = -1;
     shared_state->lunar_blade_holder = -1;
     shared_state->solar_core_waiter = -1;
@@ -172,6 +174,9 @@ int clamp_value(int value, int low, int high) {
 bool lock_state() {
     while (sem_wait(&shared_state->state_lock) != 0) {
         if (errno == EINTR) {
+            if (!arbiter_running) {
+                return false;
+            }
             continue;
         }
         print_errno("sem_wait state_lock failed");
@@ -366,8 +371,11 @@ bool tick_stamina_progression() {
 }
 
 void run_stamina_loop() {
-    while (true) {
+    while (arbiter_running) {
         sleep(1);
+        if (!arbiter_running) {
+            break;
+        }
         if (!tick_stamina_progression()) {
             break;
         }
@@ -436,15 +444,27 @@ void break_deadlock_locked() {
 }
 
 void *deadlock_monitor_loop(void *) {
-    while (true) {
-        usleep(deadlock_check_sleep_us);
+    while (arbiter_running) {
+        while (usleep(deadlock_check_sleep_us) == -1 && errno == EINTR) {
+            if (!arbiter_running) {
+                break;
+            }
+        }
+        if (!arbiter_running) {
+            break;
+        }
+        if (!lock_state()) {
+            continue;
+        }
         if (pthread_mutex_lock(&shared_state->resource_lock) != 0) {
+            unlock_state();
             continue;
         }
         if (has_circular_wait_locked()) {
             break_deadlock_locked();
         }
         pthread_mutex_unlock(&shared_state->resource_lock);
+        unlock_state();
     }
     return nullptr;
 }
@@ -454,7 +474,17 @@ bool start_deadlock_monitor_thread() {
         fprintf(stderr, "pthread_create deadlock monitor failed\n");
         return false;
     }
+    deadlock_monitor_started = true;
     return true;
+}
+
+void stop_deadlock_monitor_thread() {
+    if (!deadlock_monitor_started) {
+        return;
+    }
+    arbiter_running = 0;
+    pthread_join(deadlock_monitor_thread, nullptr);
+    deadlock_monitor_started = false;
 }
 
 void destroy_semaphore(sem_t *target, const char *name) {
@@ -524,7 +554,7 @@ void cleanup() {
 }
 
 void handle_exit_signal(int) {
-    exit(0);
+    arbiter_running = 0;
 }
 
 bool register_signal_handler(int signal_number, void (*handler)(int), const char *signal_name) {
@@ -541,10 +571,6 @@ bool register_signal_handler(int signal_number, void (*handler)(int), const char
 }
 
 bool register_exit_handlers() {
-    if (atexit(cleanup) != 0) {
-        fprintf(stderr, "failed to register cleanup\n");
-        return false;
-    }
     if (!register_signal_handler(SIGINT, handle_exit_signal, "sigint")) {
         return false;
     }
@@ -591,15 +617,20 @@ int main() {
         return 1;
     }
     if (!setup_shared_state()) {
+        cleanup();
         return 1;
     }
     if (!register_arbiter_pid()) {
+        cleanup();
         return 1;
     }
     if (!start_deadlock_monitor_thread()) {
+        cleanup();
         return 1;
     }
     printf("arbiter ready\n");
     run_stamina_loop();
+    stop_deadlock_monitor_thread();
+    cleanup();
     return 0;
 }

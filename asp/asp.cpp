@@ -214,7 +214,8 @@ void *npc_logic_loop(void *arg) {
             run_enemy_step_locked(enemy_id);
             unlock_state();
         }
-        usleep(idle_sleep_us);
+        while (usleep(idle_sleep_us) == -1 && errno == EINTR) {
+        }
     }
     return nullptr;
 }
