@@ -395,6 +395,13 @@ int allocate_weapon_iterative_locked(int player_index, int weapon_id) {
     }
     int *primary = shared_state->player_primary_inventory[player_index];
     int *storage = shared_state->long_term_storage[player_index];
+    int original_primary[game_state::inventory_slots];
+    int original_storage[game_state::inventory_slots];
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        original_primary[i] = primary[i];
+        original_storage[i] = storage[i];
+    }
+    bool moved_any_weapon = false;
     int safety = game_state::inventory_slots + 2;
     while (safety-- > 0) {
         int start = find_contiguous_free_in_array(primary, needed);
@@ -405,15 +412,34 @@ int allocate_weapon_iterative_locked(int player_index, int weapon_id) {
         int evict_size = 0;
         int evict_start = find_first_weapon_run(primary, &evict_size);
         if (evict_start < 0) {
+            if (moved_any_weapon) {
+                for (int i = 0; i < game_state::inventory_slots; ++i) {
+                    primary[i] = original_primary[i];
+                    storage[i] = original_storage[i];
+                }
+            }
             return -1;
         }
         int evict_weapon = primary[evict_start];
         int storage_start = find_contiguous_free_in_array(storage, evict_size);
         if (storage_start < 0) {
+            if (moved_any_weapon) {
+                for (int i = 0; i < game_state::inventory_slots; ++i) {
+                    primary[i] = original_primary[i];
+                    storage[i] = original_storage[i];
+                }
+            }
             return -1;
         }
         place_weapon(storage, storage_start, evict_size, evict_weapon);
         zero_run(primary, evict_start, evict_size);
+        moved_any_weapon = true;
+    }
+    if (moved_any_weapon) {
+        for (int i = 0; i < game_state::inventory_slots; ++i) {
+            primary[i] = original_primary[i];
+            storage[i] = original_storage[i];
+        }
     }
     return -1;
 }
@@ -1180,11 +1206,6 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     } else {
         draw_titled_box(y, x, h, w, title, border_pair, border_extra, fill_pair);
     }
-    if (es.dead || (!es.turn && !es.dead)) {
-        if (!es.turn) {
-            draw_titled_box(y, x, h, w, title, border_pair, border_extra, fill_pair);
-        }
-    }
     int inner_y = y + 1;
     int inner_x = x + 2;
     int inner_w = w - 4;
@@ -1888,10 +1909,12 @@ bool register_signals() {
         return false;
     }
     sa.sa_handler = handle_exit_signal;
+    sa.sa_flags = 0;
     if (sigaction(SIGINT, &sa, nullptr) != 0) {
         print_errno("sigaction sigint failed");
         return false;
     }
+    sa.sa_flags = 0;
     if (sigaction(SIGTERM, &sa, nullptr) != 0) {
         print_errno("sigaction sigterm failed");
         return false;

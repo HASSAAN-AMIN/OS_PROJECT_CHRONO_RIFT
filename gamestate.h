@@ -89,8 +89,8 @@ struct game_state {
 
     int solar_core_holder = -1;
     int lunar_blade_holder = -1;
-    int eclipse_relic_holder;
-    int eclipse_relic_present;
+    int eclipse_relic_holder = -1;
+    int eclipse_relic_present = 0;
     int solar_core_waiter = -1;
     int lunar_blade_waiter = -1;
     int current_dropped_weapon = 0;
