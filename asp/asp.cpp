@@ -16,10 +16,10 @@
 using namespace std;
 
 const char *shared_memory_name = "/chrono_rift_game_state";
-const int enemy_attack_cost = 150;
-const int enemy_attack_damage = 18;
-const int enemy_stun_chance_percent = 20;
-const useconds_t idle_sleep_us = 50000;
+const int enemy_attack_cost = game_state::enemy_max_stamina;
+const int enemy_stun_chance_percent = 15;
+const int enemy_skip_chance_percent = 10;
+const useconds_t idle_sleep_us = 80000;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -140,47 +140,77 @@ int find_living_player() {
     return pick_random_living_player(player_indices, player_count);
 }
 
-void write_attack_log(int enemy_id, int player_id) {
+int enemy_damage_for(int enemy_id) {
+    int dmg = shared_state->enemy_damage[enemy_id];
+    if (dmg <= 0) {
+        return 10;
+    }
+    return dmg;
+}
+
+void write_attack_log(int enemy_id, int player_id, int dmg) {
     snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
-        "enemy %d hit player %d for 18 dmg",
+        "enemy %d strike: hit player %d for %d damage",
         enemy_id + 1,
-        player_id + 1
+        player_id + 1,
+        dmg
     );
 }
 
-void write_enemy_stun_log(int enemy_id, int player_id) {
+void write_enemy_stun_log(int enemy_id, int player_id, int dmg) {
     snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
-        "enemy %d stunned player %d for 3s",
+        "enemy %d stun strike: hit player %d for %d, stunned 3s",
         enemy_id + 1,
-        player_id + 1
+        player_id + 1,
+        dmg
+    );
+}
+
+void write_enemy_skip_log(int enemy_id) {
+    snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "enemy %d skip: stamina drained to 50%%",
+        enemy_id + 1
     );
 }
 
 void perform_enemy_attack(int enemy_id, int player_id) {
-    int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
+    int dmg = enemy_damage_for(enemy_id);
+    int next_hp = shared_state->player_hp[player_id] - dmg;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->enemy_stamina[enemy_id] = 0;
-    write_attack_log(enemy_id, player_id);
+    write_attack_log(enemy_id, player_id, dmg);
 }
 
 void perform_enemy_stun_attack(int enemy_id, int player_id) {
-    int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
+    int dmg = enemy_damage_for(enemy_id);
+    int next_hp = shared_state->player_hp[player_id] - dmg;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->player_stun_end_time[player_id] = time(nullptr) + 3;
     pid_t arbiter_pid = shared_state->arbiter_pid;
+    shared_state->enemy_stamina[enemy_id] = 0;
+    write_enemy_stun_log(enemy_id, player_id, dmg);
     if (arbiter_pid > 0) {
         kill(arbiter_pid, SIGUSR2);
     }
-    shared_state->enemy_stamina[enemy_id] = 0;
-    write_enemy_stun_log(enemy_id, player_id);
+}
+
+void perform_enemy_skip(int enemy_id) {
+    shared_state->enemy_stamina[enemy_id] = game_state::enemy_max_stamina / 2;
+    write_enemy_skip_log(enemy_id);
 }
 
 bool should_use_stun_attack() {
     return (rand() % 100) < enemy_stun_chance_percent;
+}
+
+bool should_skip() {
+    return (rand() % 100) < enemy_skip_chance_percent;
 }
 
 void run_enemy_step_locked(int enemy_id) {
@@ -190,7 +220,17 @@ void run_enemy_step_locked(int enemy_id) {
     if (shared_state->enemy_hp[enemy_id] <= 0) {
         return;
     }
+    if (shared_state->stun_end_time[enemy_id] > time(nullptr)) {
+        return;
+    }
     if (shared_state->enemy_stamina[enemy_id] < enemy_attack_cost) {
+        return;
+    }
+    if (shared_state->outcome != game_state::outcome_ongoing) {
+        return;
+    }
+    if (should_skip()) {
+        perform_enemy_skip(enemy_id);
         return;
     }
     int player_id = find_living_player();
@@ -239,6 +279,7 @@ bool start_npc_threads() {
         fprintf(stderr, "invalid active_enemy_count: %d\n", enemy_count);
         return false;
     }
+    printf("asp: spawning %d enemy threads\n", enemy_count);
     for (int i = 0; i < enemy_count; ++i) {
         npc_ids[i] = i;
         if (pthread_create(&npc_threads[i], nullptr, npc_logic_loop, &npc_ids[i]) != 0) {

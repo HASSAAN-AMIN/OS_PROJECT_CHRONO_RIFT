@@ -16,17 +16,18 @@
 using namespace std;
 
 const char *shared_memory_name = "/chrono_rift_game_state";
-const int player_stamina_cap = 100;
-const int enemy_stamina_cap = 150;
-const unsigned int seeded_roll_value = 880;
+const int default_roll_number = 22000880;
 const useconds_t deadlock_check_sleep_us = 2000000;
+const int eclipse_relic_spawn_seconds = 25;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
 bool semaphores_ready = false;
 bool resource_lock_ready = false;
 pthread_t deadlock_monitor_thread;
+pthread_t outcome_monitor_thread;
 bool deadlock_monitor_started = false;
+bool outcome_monitor_started = false;
 volatile sig_atomic_t arbiter_running = 1;
 volatile sig_atomic_t ultimate_triggered = 0;
 volatile sig_atomic_t ultimate_ended = 0;
@@ -42,6 +43,10 @@ volatile sig_atomic_t cached_hip_pid = 0;
 volatile sig_atomic_t deadlock_broken = 0;
 time_t ultimate_end_time = 0;
 time_t stun_end_time = 0;
+time_t game_start_time = 0;
+bool eclipse_relic_dropped = false;
+int previous_enemy_hp[game_state::max_enemies] = {0};
+int active_roll_number = default_roll_number;
 
 void print_errno(const char *action) {
     fprintf(stderr, "%s: %s\n", action, strerror(errno));
@@ -133,8 +138,10 @@ bool initialize_resource_lock() {
 void clear_state() {
     for (int i = 0; i < game_state::max_players; ++i) {
         shared_state->player_hp[i] = 0;
+        shared_state->player_max_hp[i] = 0;
         shared_state->player_speed[i] = 0;
         shared_state->player_stamina[i] = 0;
+        shared_state->player_damage[i] = 0;
         shared_state->player_stun_end_time[i] = 0;
         for (int j = 0; j < game_state::inventory_slots; ++j) {
             shared_state->player_primary_inventory[i][j] = 0;
@@ -143,11 +150,15 @@ void clear_state() {
     }
     for (int i = 0; i < game_state::max_enemies; ++i) {
         shared_state->enemy_hp[i] = 0;
+        shared_state->enemy_max_hp[i] = 0;
         shared_state->enemy_speed[i] = 0;
         shared_state->enemy_stamina[i] = 0;
+        shared_state->enemy_damage[i] = 0;
         shared_state->stun_end_time[i] = 0;
+        previous_enemy_hp[i] = 0;
     }
     shared_state->eclipse_relic_holder = -1;
+    shared_state->eclipse_relic_present = 0;
     shared_state->solar_core_holder = -1;
     shared_state->lunar_blade_holder = -1;
     shared_state->solar_core_waiter = -1;
@@ -155,10 +166,15 @@ void clear_state() {
     shared_state->current_dropped_weapon = 0;
     shared_state->active_player_count = 0;
     shared_state->active_enemy_count = 0;
+    shared_state->active_player_index = -1;
+    shared_state->enemy_kills = 0;
+    shared_state->outcome = game_state::outcome_ongoing;
+    shared_state->roll_number = active_roll_number;
     shared_state->arbiter_pid = 0;
     shared_state->asp_pid = 0;
     shared_state->hip_pid = 0;
     shared_state->action_log[0] = '\0';
+    shared_state->last_event[0] = '\0';
 }
 
 int clamp_value(int value, int low, int high) {
@@ -206,8 +222,11 @@ void update_player_stamina() {
         if (!is_active_player(i)) {
             continue;
         }
+        if (shared_state->player_stun_end_time[i] > time(nullptr)) {
+            continue;
+        }
         int next_value = shared_state->player_stamina[i] + shared_state->player_speed[i];
-        shared_state->player_stamina[i] = clamp_value(next_value, 0, player_stamina_cap);
+        shared_state->player_stamina[i] = clamp_value(next_value, 0, game_state::player_max_stamina);
     }
 }
 
@@ -216,48 +235,117 @@ void update_enemy_stamina() {
         if (!is_active_enemy(i)) {
             continue;
         }
+        if (shared_state->stun_end_time[i] > time(nullptr)) {
+            continue;
+        }
         int next_value = shared_state->enemy_stamina[i] + shared_state->enemy_speed[i];
-        shared_state->enemy_stamina[i] = clamp_value(next_value, 0, enemy_stamina_cap);
+        shared_state->enemy_stamina[i] = clamp_value(next_value, 0, game_state::enemy_max_stamina);
     }
+}
+
+int last_two_digits(int value) {
+    if (value < 0) {
+        value = -value;
+    }
+    return value % 100;
+}
+
+int last_digit(int value) {
+    if (value < 0) {
+        value = -value;
+    }
+    return value % 10;
+}
+
+int second_last_digit(int value) {
+    if (value < 0) {
+        value = -value;
+    }
+    return (value / 10) % 10;
 }
 
 int roll_player_hp() {
-    return 880 + (rand() % 901);
+    return active_roll_number + 100 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
-    return 80 + (rand() % 151);
+    return last_two_digits(active_roll_number) + 50 + (rand() % 151);
 }
 
 int roll_enemy_speed() {
-    return (rand() % 21) + 10;
+    return 10 + (rand() % 21);
+}
+
+int roll_enemy_count() {
+    return 2 + (rand() % 8);
+}
+
+int player_damage_value() {
+    return last_digit(active_roll_number) + 10;
+}
+
+int enemy_damage_value() {
+    return second_last_digit(active_roll_number) + 10;
 }
 
 void initialize_players() {
+    int per_player_speed = 100 / game_state::max_players;
+    if (per_player_speed < 1) {
+        per_player_speed = 1;
+    }
     for (int i = 0; i < game_state::max_players; ++i) {
         shared_state->player_hp[i] = roll_player_hp();
-        shared_state->player_speed[i] = 100 / 4;
+        shared_state->player_max_hp[i] = shared_state->player_hp[i];
+        shared_state->player_speed[i] = per_player_speed;
         shared_state->player_stamina[i] = 0;
+        shared_state->player_damage[i] = player_damage_value();
     }
+    shared_state->active_player_count = game_state::max_players;
 }
 
 void initialize_enemies() {
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        shared_state->enemy_hp[i] = roll_enemy_hp();
-        shared_state->enemy_speed[i] = roll_enemy_speed();
-        shared_state->enemy_stamina[i] = 0;
+    int enemy_count = roll_enemy_count();
+    if (enemy_count < 2) {
+        enemy_count = 2;
     }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    int common_damage = enemy_damage_value();
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (i < enemy_count) {
+            shared_state->enemy_hp[i] = roll_enemy_hp();
+            shared_state->enemy_max_hp[i] = shared_state->enemy_hp[i];
+            shared_state->enemy_speed[i] = roll_enemy_speed();
+            shared_state->enemy_stamina[i] = 0;
+            shared_state->enemy_damage[i] = common_damage;
+        } else {
+            shared_state->enemy_hp[i] = 0;
+            shared_state->enemy_max_hp[i] = 0;
+            shared_state->enemy_speed[i] = 0;
+            shared_state->enemy_stamina[i] = 0;
+            shared_state->enemy_damage[i] = 0;
+        }
+        previous_enemy_hp[i] = shared_state->enemy_hp[i];
+    }
+    shared_state->active_enemy_count = enemy_count;
 }
 
 bool initialize_seeded_stats() {
-    srand(seeded_roll_value);
+    srand(static_cast<unsigned int>(active_roll_number));
     if (!lock_state()) {
         return false;
     }
-    shared_state->active_player_count = game_state::max_players;
-    shared_state->active_enemy_count = game_state::max_enemies;
     initialize_players();
     initialize_enemies();
+    snprintf(
+        shared_state->action_log, sizeof(shared_state->action_log),
+        "battle begins: %d players vs %d enemies (seed=%d)",
+        shared_state->active_player_count,
+        shared_state->active_enemy_count,
+        active_roll_number
+    );
+    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "init");
     if (!unlock_state()) {
         return false;
     }
@@ -333,6 +421,106 @@ void schedule_next_alarm_locked(time_t now) {
     alarm(next_alarm_seconds);
 }
 
+void track_enemy_deaths_locked() {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (i >= shared_state->active_enemy_count) {
+            previous_enemy_hp[i] = shared_state->enemy_hp[i];
+            continue;
+        }
+        int prev = previous_enemy_hp[i];
+        int curr = shared_state->enemy_hp[i];
+        if (prev > 0 && curr <= 0) {
+            shared_state->enemy_kills += 1;
+            snprintf(
+                shared_state->action_log, sizeof(shared_state->action_log),
+                "enemy %d eliminated (%d/%d kills)",
+                i + 1,
+                shared_state->enemy_kills,
+                game_state::kills_required_to_win
+            );
+            snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_%d_died", i + 1);
+        }
+        previous_enemy_hp[i] = curr;
+    }
+}
+
+void update_active_player_locked() {
+    int chosen = -1;
+    int best_stamina = -1;
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (shared_state->player_hp[i] <= 0) {
+            continue;
+        }
+        if (shared_state->player_stun_end_time[i] > time(nullptr)) {
+            continue;
+        }
+        int s = shared_state->player_stamina[i];
+        if (s > best_stamina) {
+            best_stamina = s;
+            chosen = i;
+        }
+    }
+    if (chosen < 0) {
+        for (int i = 0; i < game_state::max_players; ++i) {
+            if (shared_state->player_hp[i] > 0) {
+                chosen = i;
+                break;
+            }
+        }
+    }
+    shared_state->active_player_index = chosen;
+}
+
+void maybe_spawn_eclipse_relic_locked(time_t now) {
+    if (eclipse_relic_dropped) {
+        return;
+    }
+    if (now - game_start_time < eclipse_relic_spawn_seconds) {
+        return;
+    }
+    if (shared_state->current_dropped_weapon != 0) {
+        return;
+    }
+    shared_state->current_dropped_weapon = game_state::eclipse_relic_id;
+    shared_state->eclipse_relic_present = 1;
+    snprintf(
+        shared_state->action_log, sizeof(shared_state->action_log),
+        "eclipse relic surges into the arena - pick it up!"
+    );
+    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "eclipse_spawn");
+    eclipse_relic_dropped = true;
+}
+
+void check_outcome_locked() {
+    if (shared_state->outcome != game_state::outcome_ongoing) {
+        return;
+    }
+    if (shared_state->enemy_kills >= game_state::kills_required_to_win) {
+        shared_state->outcome = game_state::outcome_win;
+        snprintf(
+            shared_state->action_log, sizeof(shared_state->action_log),
+            "VICTORY: %d enemies vanquished",
+            shared_state->enemy_kills
+        );
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "victory");
+        return;
+    }
+    int alive_players = 0;
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (i < shared_state->active_player_count && shared_state->player_hp[i] > 0) {
+            alive_players += 1;
+        }
+    }
+    if (alive_players == 0 && shared_state->active_player_count > 0) {
+        shared_state->outcome = game_state::outcome_lose;
+        snprintf(
+            shared_state->action_log, sizeof(shared_state->action_log),
+            "DEFEAT: party wiped"
+        );
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "defeat");
+    }
+}
+
 bool tick_stamina_progression() {
     if (!lock_state()) {
         return false;
@@ -344,26 +532,35 @@ bool tick_stamina_progression() {
     schedule_next_alarm_locked(now);
     if (ultimate_triggered) {
         ultimate_triggered = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered! asp frozen for 10s");
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered: asp frozen for 10s");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "ultimate_start");
     }
     if (ultimate_ended) {
         ultimate_ended = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate ended, asp resumed");
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate ended: asp resumed");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "ultimate_end");
     }
     if (stun_triggered) {
         stun_triggered = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun triggered! entities frozen for 3s");
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun pulse: arena frozen 3s");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "stun_start");
     }
     if (stun_ended) {
         stun_ended = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun ended, entities resumed");
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun ended: combatants released");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "stun_end");
     }
     if (deadlock_broken) {
         deadlock_broken = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock broken by arbiter");
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock monitor forced an artifact drop");
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "deadlock_break");
     }
     update_player_stamina();
     update_enemy_stamina();
+    track_enemy_deaths_locked();
+    update_active_player_locked();
+    maybe_spawn_eclipse_relic_locked(now);
+    check_outcome_locked();
     if (!unlock_state()) {
         return false;
     }
@@ -382,6 +579,24 @@ void run_stamina_loop() {
     }
 }
 
+void *outcome_monitor_loop(void *) {
+    while (arbiter_running) {
+        sleep(1);
+        if (!arbiter_running) {
+            break;
+        }
+        if (lock_state()) {
+            int outcome_value = shared_state->outcome;
+            unlock_state();
+            if (outcome_value != game_state::outcome_ongoing) {
+                arbiter_running = 0;
+                break;
+            }
+        }
+    }
+    return nullptr;
+}
+
 void handle_alarm_signal(int) {
     alarm_fired = 1;
 }
@@ -392,6 +607,13 @@ void handle_ultimate_signal(int) {
 
 void handle_stun_signal(int) {
     stun_requested = 1;
+}
+
+void handle_quit_signal(int) {
+    if (shared_state != nullptr) {
+        shared_state->outcome = game_state::outcome_quit;
+    }
+    arbiter_running = 0;
 }
 
 bool register_arbiter_pid() {
@@ -478,13 +700,25 @@ bool start_deadlock_monitor_thread() {
     return true;
 }
 
-void stop_deadlock_monitor_thread() {
-    if (!deadlock_monitor_started) {
-        return;
+bool start_outcome_monitor_thread() {
+    if (pthread_create(&outcome_monitor_thread, nullptr, outcome_monitor_loop, nullptr) != 0) {
+        fprintf(stderr, "pthread_create outcome monitor failed\n");
+        return false;
     }
+    outcome_monitor_started = true;
+    return true;
+}
+
+void stop_monitor_threads() {
     arbiter_running = 0;
-    pthread_join(deadlock_monitor_thread, nullptr);
-    deadlock_monitor_started = false;
+    if (deadlock_monitor_started) {
+        pthread_join(deadlock_monitor_thread, nullptr);
+        deadlock_monitor_started = false;
+    }
+    if (outcome_monitor_started) {
+        pthread_join(outcome_monitor_thread, nullptr);
+        outcome_monitor_started = false;
+    }
 }
 
 void destroy_semaphore(sem_t *target, const char *name) {
@@ -574,7 +808,7 @@ bool register_exit_handlers() {
     if (!register_signal_handler(SIGINT, handle_exit_signal, "sigint")) {
         return false;
     }
-    if (!register_signal_handler(SIGTERM, handle_exit_signal, "sigterm")) {
+    if (!register_signal_handler(SIGTERM, handle_quit_signal, "sigterm")) {
         return false;
     }
     if (!register_signal_handler(SIGALRM, handle_alarm_signal, "sigalrm")) {
@@ -612,7 +846,26 @@ bool setup_shared_state() {
     return true;
 }
 
-int main() {
+void parse_arguments(int argc, char **argv) {
+    if (argc >= 2) {
+        int parsed = atoi(argv[1]);
+        if (parsed > 0) {
+            active_roll_number = parsed;
+        }
+    }
+    const char *env_value = getenv("ROLL_NUMBER");
+    if (env_value != nullptr) {
+        int parsed = atoi(env_value);
+        if (parsed > 0) {
+            active_roll_number = parsed;
+        }
+    }
+}
+
+int main(int argc, char **argv) {
+    parse_arguments(argc, argv);
+    printf("arbiter starting with roll number %d\n", active_roll_number);
+    game_start_time = time(nullptr);
     if (!register_exit_handlers()) {
         return 1;
     }
@@ -628,9 +881,15 @@ int main() {
         cleanup();
         return 1;
     }
-    printf("arbiter ready\n");
+    if (!start_outcome_monitor_thread()) {
+        cleanup();
+        return 1;
+    }
+    printf("arbiter ready: %d players vs %d enemies\n",
+           shared_state->active_player_count, shared_state->active_enemy_count);
     run_stamina_loop();
-    stop_deadlock_monitor_thread();
+    stop_monitor_threads();
     cleanup();
+    printf("arbiter exited cleanly\n");
     return 0;
 }
