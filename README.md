@@ -30,11 +30,11 @@ make clean
 make
 ```
 
-builds:
+builds in project root:
 
-- `arbiter/arbiter`
-- `hip/hip`
-- `asp/asp`
+- `arbiter_exec`
+- `hip_exec`
+- `asp_exec`
 
 ## run order
 
@@ -43,7 +43,7 @@ start one terminal per process from project root.
 terminal 1 (game arbiter, takes roll number as cmdline arg):
 
 ```bash
-./arbiter/arbiter 22000880
+./arbiter_exec 22000880
 ```
 
 if no roll number is passed it falls back to `ROLL_NUMBER` env var or the default `22000880`.
@@ -51,13 +51,13 @@ if no roll number is passed it falls back to `ROLL_NUMBER` env var or the defaul
 terminal 2 (asp, no args):
 
 ```bash
-./asp/asp
+./asp_exec
 ```
 
 terminal 3 (hip, takes party size as cmdline arg or prompts):
 
 ```bash
-./hip/hip 4
+./hip_exec 4
 ```
 
 with no arg, hip prompts for party size on stdin before launching the tui. `PARTY_SIZE` env var is also honored.
