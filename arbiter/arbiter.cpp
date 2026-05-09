@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <csignal>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,9 +32,14 @@ volatile sig_atomic_t stun_triggered = 0;
 volatile sig_atomic_t stun_ended = 0;
 volatile sig_atomic_t asp_frozen = 0;
 volatile sig_atomic_t hip_frozen = 0;
-volatile sig_atomic_t ultimate_alarm_pending = 0;
-volatile sig_atomic_t stun_alarm_pending = 0;
+volatile sig_atomic_t ultimate_requested = 0;
+volatile sig_atomic_t stun_requested = 0;
+volatile sig_atomic_t alarm_fired = 0;
+volatile sig_atomic_t cached_asp_pid = 0;
+volatile sig_atomic_t cached_hip_pid = 0;
 volatile sig_atomic_t deadlock_broken = 0;
+time_t ultimate_end_time = 0;
+time_t stun_end_time = 0;
 
 void print_errno(const char *action) {
     fprintf(stderr, "%s: %s\n", action, strerror(errno));
@@ -253,10 +259,84 @@ bool initialize_seeded_stats() {
     return true;
 }
 
+void update_cached_pids_locked() {
+    cached_asp_pid = static_cast<sig_atomic_t>(shared_state->asp_pid);
+    cached_hip_pid = static_cast<sig_atomic_t>(shared_state->hip_pid);
+}
+
+void apply_signal_requests_locked(time_t now) {
+    if (ultimate_requested) {
+        ultimate_requested = 0;
+        ultimate_triggered = 1;
+        asp_frozen = 1;
+        ultimate_end_time = now + 10;
+    }
+    if (stun_requested) {
+        stun_requested = 0;
+        stun_triggered = 1;
+        asp_frozen = 1;
+        hip_frozen = 1;
+        stun_end_time = now + 3;
+    }
+}
+
+void process_freeze_endings_locked(time_t now) {
+    if (alarm_fired) {
+        alarm_fired = 0;
+    }
+    if (ultimate_end_time > 0 && now >= ultimate_end_time) {
+        ultimate_end_time = 0;
+        ultimate_ended = 1;
+    }
+    if (stun_end_time > 0 && now >= stun_end_time) {
+        stun_end_time = 0;
+        stun_ended = 1;
+    }
+    bool asp_should_stay_frozen = (ultimate_end_time > 0) || (stun_end_time > 0);
+    bool hip_should_stay_frozen = (stun_end_time > 0);
+    if (asp_frozen && !asp_should_stay_frozen) {
+        pid_t asp_pid = static_cast<pid_t>(cached_asp_pid);
+        if (asp_pid > 0) {
+            kill(asp_pid, SIGCONT);
+        }
+        asp_frozen = 0;
+    }
+    if (hip_frozen && !hip_should_stay_frozen) {
+        pid_t hip_pid = static_cast<pid_t>(cached_hip_pid);
+        if (hip_pid > 0) {
+            kill(hip_pid, SIGCONT);
+        }
+        hip_frozen = 0;
+    }
+}
+
+void schedule_next_alarm_locked(time_t now) {
+    int next_alarm_seconds = 0;
+    if (ultimate_end_time > now) {
+        next_alarm_seconds = static_cast<int>(ultimate_end_time - now);
+    }
+    if (stun_end_time > now) {
+        int stun_seconds = static_cast<int>(stun_end_time - now);
+        if (next_alarm_seconds == 0 || stun_seconds < next_alarm_seconds) {
+            next_alarm_seconds = stun_seconds;
+        }
+    }
+    if (next_alarm_seconds <= 0) {
+        alarm(0);
+        return;
+    }
+    alarm(next_alarm_seconds);
+}
+
 bool tick_stamina_progression() {
     if (!lock_state()) {
         return false;
     }
+    time_t now = time(nullptr);
+    update_cached_pids_locked();
+    apply_signal_requests_locked(now);
+    process_freeze_endings_locked(now);
+    schedule_next_alarm_locked(now);
     if (ultimate_triggered) {
         ultimate_triggered = 0;
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered! asp frozen for 10s");
@@ -295,46 +375,15 @@ void run_stamina_loop() {
 }
 
 void handle_alarm_signal(int) {
-    if (asp_frozen) {
-        pid_t asp_pid = shared_state->asp_pid;
-        if (asp_pid > 0) {
-            kill(asp_pid, SIGCONT);
-        }
-        asp_frozen = 0;
-    }
-    if (hip_frozen) {
-        pid_t hip_pid = shared_state->hip_pid;
-        if (hip_pid > 0) {
-            kill(hip_pid, SIGCONT);
-        }
-        hip_frozen = 0;
-    }
-    if (ultimate_alarm_pending) {
-        ultimate_alarm_pending = 0;
-        ultimate_ended = 1;
-    }
-    if (stun_alarm_pending) {
-        stun_alarm_pending = 0;
-        stun_ended = 1;
-    }
+    alarm_fired = 1;
 }
 
 void handle_ultimate_signal(int) {
-    asp_frozen = 1;
-    hip_frozen = 0;
-    alarm(10);
-    ultimate_triggered = 1;
-    ultimate_alarm_pending = 1;
-    stun_alarm_pending = 0;
+    ultimate_requested = 1;
 }
 
 void handle_stun_signal(int) {
-    asp_frozen = 1;
-    hip_frozen = 1;
-    alarm(3);
-    stun_triggered = 1;
-    stun_alarm_pending = 1;
-    ultimate_alarm_pending = 0;
+    stun_requested = 1;
 }
 
 bool register_arbiter_pid() {
@@ -478,29 +527,37 @@ void handle_exit_signal(int) {
     exit(0);
 }
 
+bool register_signal_handler(int signal_number, void (*handler)(int), const char *signal_name) {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = handler;
+    action.sa_flags = SA_RESTART;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(signal_number, &action, nullptr) != 0) {
+        fprintf(stderr, "failed to register %s handler\n", signal_name);
+        return false;
+    }
+    return true;
+}
+
 bool register_exit_handlers() {
     if (atexit(cleanup) != 0) {
         fprintf(stderr, "failed to register cleanup\n");
         return false;
     }
-    if (signal(SIGINT, handle_exit_signal) == SIG_ERR) {
-        fprintf(stderr, "failed to register sigint handler\n");
+    if (!register_signal_handler(SIGINT, handle_exit_signal, "sigint")) {
         return false;
     }
-    if (signal(SIGTERM, handle_exit_signal) == SIG_ERR) {
-        fprintf(stderr, "failed to register sigterm handler\n");
+    if (!register_signal_handler(SIGTERM, handle_exit_signal, "sigterm")) {
         return false;
     }
-    if (signal(SIGALRM, handle_alarm_signal) == SIG_ERR) {
-        fprintf(stderr, "failed to register sigalrm handler\n");
+    if (!register_signal_handler(SIGALRM, handle_alarm_signal, "sigalrm")) {
         return false;
     }
-    if (signal(SIGUSR1, handle_ultimate_signal) == SIG_ERR) {
-        fprintf(stderr, "failed to register sigusr1 handler\n");
+    if (!register_signal_handler(SIGUSR1, handle_ultimate_signal, "sigusr1")) {
         return false;
     }
-    if (signal(SIGUSR2, handle_stun_signal) == SIG_ERR) {
-        fprintf(stderr, "failed to register sigusr2 handler\n");
+    if (!register_signal_handler(SIGUSR2, handle_stun_signal, "sigusr2")) {
         return false;
     }
     return true;
