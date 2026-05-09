@@ -98,6 +98,7 @@ struct game_state {
     int active_enemy_count;
     int active_player_index;
     int enemy_kills;
+    int total_kills;
     int outcome;
     int roll_number;
     pid_t arbiter_pid;

@@ -168,6 +168,7 @@ void clear_state() {
     shared_state->active_enemy_count = 0;
     shared_state->active_player_index = -1;
     shared_state->enemy_kills = 0;
+    shared_state->total_kills = 0;
     shared_state->outcome = game_state::outcome_ongoing;
     shared_state->roll_number = active_roll_number;
     shared_state->arbiter_pid = 0;
@@ -279,7 +280,7 @@ int second_last_digit(int value) {
 }
 
 int roll_player_hp() {
-    return 240880 + (rand() % 901);
+    return 880 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
@@ -461,17 +462,21 @@ void track_enemy_deaths_locked() {
         int prev = previous_enemy_hp[i];
         int curr = shared_state->enemy_hp[i];
         if (prev > 0 && curr <= 0) {
-            shared_state->enemy_kills += 1;
-            snprintf(
-                shared_state->action_log, sizeof(shared_state->action_log),
-                "enemy %d eliminated (%d/%d kills)",
-                i + 1,
-                shared_state->enemy_kills,
-                game_state::kills_required_to_win
-            );
-            snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_%d_died", i + 1);
+            shared_state->total_kills += 1;
+            shared_state->enemy_kills = shared_state->total_kills;
+            if (shared_state->total_kills >= 10) {
+                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "VICTORY: 10 enemies defeated!");
+                shared_state->outcome = game_state::outcome_win;
+                arbiter_running = 0;
+            } else {
+                shared_state->enemy_hp[i] = roll_enemy_hp();
+                shared_state->enemy_max_hp[i] = shared_state->enemy_hp[i];
+                shared_state->enemy_stamina[i] = 0;
+                shared_state->stun_end_time[i] = 0;
+                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "enemy respawned");
+            }
         }
-        previous_enemy_hp[i] = curr;
+        previous_enemy_hp[i] = shared_state->enemy_hp[i];
     }
 }
 
