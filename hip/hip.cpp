@@ -66,11 +66,10 @@ struct hip_snapshot {
 };
 
 struct window_set {
-    WINDOW *status;
-    WINDOW *players;
-    WINDOW *enemies;
-    WINDOW *inventory;
-    WINDOW *action_log;
+    WINDOW *left_panel;
+    WINDOW *center_panel;
+    WINDOW *right_panel;
+    WINDOW *bottom_bar;
     int rows;
     int cols;
 };
@@ -79,12 +78,19 @@ int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
 volatile sig_atomic_t running = 1;
 volatile sig_atomic_t full_redraw_requested = 0;
+volatile sig_atomic_t resize_requested = 0;
 pthread_t render_thread;
 pthread_t input_thread;
 bool ncurses_ready = false;
 bool endwin_called = false;
-window_set windows = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0};
+window_set windows = {nullptr, nullptr, nullptr, nullptr, 0, 0};
 pthread_mutex_t ncurses_lock = PTHREAD_MUTEX_INITIALIZER;
+const int action_history_capacity = 128;
+char action_history[action_history_capacity][256];
+int action_history_start = 0;
+int action_history_count = 0;
+int action_scroll_offset = 0;
+char last_action_seen[256] = "";
 
 void print_errno(const char *action) {
     fprintf(stderr, "%s: %s\n", action, strerror(errno));
@@ -711,39 +717,44 @@ void destroy_window(WINDOW **target) {
 }
 
 void destroy_windows() {
-    destroy_window(&windows.status);
-    destroy_window(&windows.players);
-    destroy_window(&windows.enemies);
-    destroy_window(&windows.inventory);
-    destroy_window(&windows.action_log);
+    destroy_window(&windows.left_panel);
+    destroy_window(&windows.center_panel);
+    destroy_window(&windows.right_panel);
+    destroy_window(&windows.bottom_bar);
 }
 
 bool create_windows_for_size(int rows, int cols) {
-    int status_h = 5;
-    int mid_h = (rows - status_h) / 2;
-    if (mid_h < 8) {
-        mid_h = 8;
+    int bottom_h = 1;
+    int panel_h = rows - bottom_h;
+    int left_w = cols / 3;
+    int center_w = cols / 3;
+    int right_w = cols - left_w - center_w;
+    if (left_w < 28) {
+        left_w = 28;
     }
-    int bottom_h = rows - status_h - mid_h;
-    if (bottom_h < 8) {
-        bottom_h = 8;
+    if (center_w < 28) {
+        center_w = 28;
     }
-    int used_h = status_h + mid_h + bottom_h;
-    if (used_h > rows) {
-        bottom_h -= (used_h - rows);
+    right_w = cols - left_w - center_w;
+    if (right_w < 28) {
+        right_w = 28;
+        center_w = cols - left_w - right_w;
+    }
+    if (center_w < 28) {
+        center_w = 28;
+        left_w = cols - center_w - right_w;
+    }
+    if (left_w < 28) {
+        left_w = 28;
     }
 
-    int left_w = cols / 2;
-    int right_w = cols - left_w;
+    windows.left_panel = newwin(panel_h, left_w, 0, 0);
+    windows.center_panel = newwin(panel_h, center_w, 0, left_w);
+    windows.right_panel = newwin(panel_h, right_w, 0, left_w + center_w);
+    windows.bottom_bar = newwin(bottom_h, cols, panel_h, 0);
 
-    windows.status = newwin(status_h, cols, 0, 0);
-    windows.players = newwin(mid_h, left_w, status_h, 0);
-    windows.enemies = newwin(mid_h, right_w, status_h, left_w);
-    windows.inventory = newwin(bottom_h, left_w, status_h + mid_h, 0);
-    windows.action_log = newwin(bottom_h, right_w, status_h + mid_h, left_w);
-
-    if (windows.status == nullptr || windows.players == nullptr || windows.enemies == nullptr ||
-        windows.inventory == nullptr || windows.action_log == nullptr) {
+    if (windows.left_panel == nullptr || windows.center_panel == nullptr || windows.right_panel == nullptr ||
+        windows.bottom_bar == nullptr) {
         destroy_windows();
         return false;
     }
@@ -757,13 +768,13 @@ bool ensure_windows() {
     int rows = 0;
     int cols = 0;
     getmaxyx(stdscr, rows, cols);
-    if (rows < 24 || cols < 90) {
+    if (rows < 20 || cols < 96) {
         erase();
-        mvprintw(0, 0, "terminal too small: need at least 90x24");
+        mvprintw(0, 0, "terminal too small: need at least 96x20");
         refresh();
         return false;
     }
-    if (windows.status != nullptr && windows.rows == rows && windows.cols == cols) {
+    if (windows.left_panel != nullptr && windows.rows == rows && windows.cols == cols) {
         return true;
     }
     destroy_windows();
@@ -790,6 +801,8 @@ bool init_ncurses_ui() {
         init_pair(color_lunar_slot, COLOR_CYAN, COLOR_BLACK);
         init_pair(color_weapon_slot, COLOR_MAGENTA, COLOR_BLACK);
     }
+    resize_requested = 0;
+    full_redraw_requested = 1;
     if (!ensure_windows()) {
         return false;
     }
@@ -852,11 +865,28 @@ void draw_bar(char *output, int output_size, int current_value, int max_value, i
 }
 
 void draw_window_frame(WINDOW *target, const char *title) {
-    wattron(target, COLOR_PAIR(color_border));
-    box(target, 0, 0);
-    wattroff(target, COLOR_PAIR(color_border));
+    int h = getmaxy(target);
+    int w = getmaxx(target);
+    if (h < 2 || w < 2) {
+        return;
+    }
     wattron(target, COLOR_PAIR(color_border) | A_BOLD);
-    mvwprintw(target, 0, 2, " %s ", title);
+    mvwaddch(target, 0, 0, ACS_ULCORNER);
+    mvwaddch(target, 0, w - 1, ACS_URCORNER);
+    mvwaddch(target, h - 1, 0, ACS_LLCORNER);
+    mvwaddch(target, h - 1, w - 1, ACS_LRCORNER);
+    for (int x = 1; x < w - 1; ++x) {
+        mvwaddch(target, 0, x, ACS_HLINE);
+        mvwaddch(target, h - 1, x, ACS_HLINE);
+    }
+    for (int y = 1; y < h - 1; ++y) {
+        mvwaddch(target, y, 0, ACS_VLINE);
+        mvwaddch(target, y, w - 1, ACS_VLINE);
+    }
+    int title_x = 2;
+    if (title_x < w - 2) {
+        mvwprintw(target, 0, title_x, " %s ", title);
+    }
     wattroff(target, COLOR_PAIR(color_border) | A_BOLD);
 }
 
@@ -882,70 +912,20 @@ void draw_stat_line(
     wattroff(target, COLOR_PAIR(color_pair_id) | A_BOLD);
 }
 
-void draw_system_status(const hip_snapshot *snapshot, unsigned long frame_id) {
-    werase(windows.status);
-    draw_window_frame(windows.status, "system status");
-    time_t now = time(nullptr);
-    mvwprintw(windows.status, 1, 2, "frame %lu", frame_id);
-    mvwprintw(windows.status, 1, 20, "target fps 60");
-    mvwprintw(windows.status, 1, 38, "time %ld", static_cast<long>(now));
-    wattron(windows.status, COLOR_PAIR(color_artifact) | A_BOLD);
-    mvwprintw(
-        windows.status, 2, 2, "solar %d  lunar %d  eclipse %d",
-        snapshot->solar_core_holder, snapshot->lunar_blade_holder, snapshot->eclipse_relic_holder
-    );
-    wattroff(windows.status, COLOR_PAIR(color_artifact) | A_BOLD);
-    mvwprintw(windows.status, 3, 2, "press q to exit hip");
-}
-
-void draw_players(const hip_snapshot *snapshot) {
-    werase(windows.players);
-    draw_window_frame(windows.players, "player squad");
-    int row = 1;
-    for (int i = 0; i < game_state::max_players; ++i) {
-        char hp_label[32];
-        char stamina_label[32];
-        snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
-        snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
-        draw_stat_line(windows.players, row++, hp_label, snapshot->player_hp[i], player_max_hp, 18, color_player_hp);
-        draw_stat_line(
-            windows.players, row++, stamina_label, snapshot->player_stamina[i], max_stat_value, 18, color_player_stamina
-        );
+void append_action_history_line(const char *line) {
+    if (line == nullptr || line[0] == '\0') {
+        return;
     }
-}
-
-void draw_enemies(const hip_snapshot *snapshot) {
-    werase(windows.enemies);
-    draw_window_frame(windows.enemies, "enemy bots");
-    const int enemy_max_hp = 230;
-    int h = 0;
-    int w = 0;
-    getmaxyx(windows.enemies, h, w);
-    int row = 1;
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        if (row >= h - 2) {
-            break;
-        }
-        int hp = clamp_value(snapshot->enemy_hp[i], 0, enemy_max_hp);
-        int st = clamp_value(snapshot->enemy_stamina[i], 0, enemy_stamina_cap);
-        int bar_width = (w - 20) / 2;
-        if (bar_width < 5) {
-            bar_width = 5;
-        }
-        char hp_bar[64];
-        char st_bar[64];
-        draw_bar(hp_bar, sizeof(hp_bar), hp, enemy_max_hp, bar_width);
-        draw_bar(st_bar, sizeof(st_bar), st, enemy_stamina_cap, bar_width);
-        wattron(windows.enemies, A_BOLD);
-        mvwprintw(windows.enemies, row, 2, "e%d", i + 1);
-        wattroff(windows.enemies, A_BOLD);
-        wattron(windows.enemies, COLOR_PAIR(color_enemy_hp) | A_BOLD);
-        mvwprintw(windows.enemies, row, 6, "h%s", hp_bar);
-        wattroff(windows.enemies, COLOR_PAIR(color_enemy_hp) | A_BOLD);
-        wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
-        mvwprintw(windows.enemies, row, 8 + static_cast<int>(strlen(hp_bar)), "s%s", st_bar);
-        wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
-        row++;
+    if (strncmp(last_action_seen, line, sizeof(last_action_seen)) == 0) {
+        return;
+    }
+    snprintf(last_action_seen, sizeof(last_action_seen), "%s", line);
+    int index = (action_history_start + action_history_count) % action_history_capacity;
+    snprintf(action_history[index], sizeof(action_history[index]), "%s", line);
+    if (action_history_count < action_history_capacity) {
+        action_history_count++;
+    } else {
+        action_history_start = (action_history_start + 1) % action_history_capacity;
     }
 }
 
@@ -973,6 +953,7 @@ void draw_inventory_grid(
     WINDOW *target, int start_row, int start_col, const int *slots, int row_count, int col_count, int col_width
 ) {
     int h = getmaxy(target);
+    int w = getmaxx(target);
     for (int row = 0; row < row_count; ++row) {
         for (int col = 0; col < col_count; ++col) {
             int index = row * col_count + col;
@@ -981,70 +962,129 @@ void draw_inventory_grid(
             int color_pair = weapon_color_from_id(weapon_id);
             int y = start_row + row;
             int x = start_col + col * col_width;
-            if (y >= h - 1) {
+            if (y >= h - 1 || x >= w - 2) {
                 continue;
             }
-            if (target == windows.inventory) {
-                wattron(windows.inventory, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
-                mvwprintw(windows.inventory, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
-                wattroff(windows.inventory, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
-            } else {
-                int attr = weapon_attr_from_id(weapon_id);
-                wattron(target, COLOR_PAIR(color_pair) | attr);
-                mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
-                wattroff(target, COLOR_PAIR(color_pair) | attr);
-            }
+            wattron(target, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
+            mvwprintw(target, y, x, "%-*.*s", col_width - 1, col_width - 1, label);
+            wattroff(target, COLOR_PAIR(color_pair) | A_REVERSE | A_BOLD);
         }
     }
 }
 
-void draw_inventory(const hip_snapshot *snapshot) {
-    werase(windows.inventory);
-    draw_window_frame(windows.inventory, "inventory tetris");
-    int active_player = find_inventory_player(snapshot);
-    int h = getmaxy(windows.inventory);
-    int w = getmaxx(windows.inventory);
-    int row_count = 4;
-    int col_count = 5;
-    int col_width = (w - 4) / col_count;
-    if (col_width < 6) {
-        col_width = 6;
+void draw_player_squad_panel(const hip_snapshot *snapshot) {
+    werase(windows.left_panel);
+    draw_window_frame(windows.left_panel, "player_squad");
+    int h = getmaxy(windows.left_panel);
+    int w = getmaxx(windows.left_panel);
+    int row = 1;
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (row >= h - 6) {
+            break;
+        }
+        int hp = clamp_value(snapshot->player_hp[i], 0, player_max_hp);
+        int stamina = clamp_value(snapshot->player_stamina[i], 0, max_stat_value);
+        int bar_width = w - 22;
+        if (bar_width < 8) {
+            bar_width = 8;
+        }
+        char hp_bar[96];
+        char st_bar[96];
+        draw_bar(hp_bar, sizeof(hp_bar), hp, player_max_hp, bar_width);
+        draw_bar(st_bar, sizeof(st_bar), stamina, max_stat_value, bar_width);
+        bool low_hp = hp > 0 && hp * 100 <= player_max_hp * 20;
+        int hp_attr = COLOR_PAIR(color_player_hp) | A_BOLD;
+        if (low_hp) {
+            hp_attr = COLOR_PAIR(color_enemy_hp) | A_BOLD | A_BLINK;
+        }
+        wattron(windows.left_panel, A_BOLD);
+        mvwprintw(windows.left_panel, row, 2, "p%d", i + 1);
+        wattroff(windows.left_panel, A_BOLD);
+        wattron(windows.left_panel, hp_attr);
+        mvwprintw(windows.left_panel, row, 6, "hp %3d/%3d %s", hp, player_max_hp, hp_bar);
+        wattroff(windows.left_panel, hp_attr);
+        row++;
+        wattron(windows.left_panel, COLOR_PAIR(color_player_stamina) | A_BOLD);
+        mvwprintw(windows.left_panel, row, 6, "st %3d/%3d %s", stamina, max_stat_value, st_bar);
+        wattroff(windows.left_panel, COLOR_PAIR(color_player_stamina) | A_BOLD);
+        row++;
     }
-    mvwprintw(windows.inventory, 1, 2, "gear bag p%d", active_player + 1);
-    draw_inventory_grid(
-        windows.inventory,
-        3,
-        2,
-        snapshot->player_primary_inventory[active_player],
-        row_count,
-        col_count,
-        col_width
-    );
-    if (h >= 14) {
-        mvwprintw(windows.inventory, 8, 2, "storage");
+    int active_player = find_inventory_player(snapshot);
+    if (row < h - 6) {
+        wattron(windows.left_panel, A_BOLD);
+        mvwprintw(windows.left_panel, row++, 2, "inv p%d", active_player + 1);
+        wattroff(windows.left_panel, A_BOLD);
+        int col_width = (w - 4) / 5;
+        if (col_width < 6) {
+            col_width = 6;
+        }
         draw_inventory_grid(
-            windows.inventory,
-            9,
+            windows.left_panel,
+            row,
             2,
-            snapshot->long_term_storage[active_player],
-            row_count,
-            col_count,
+            snapshot->player_primary_inventory[active_player],
+            4,
+            5,
             col_width
         );
-    } else {
-        mvwprintw(windows.inventory, h - 2, 2, "storage hidden: enlarge terminal");
     }
 }
 
-void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
-    werase(windows.action_log);
-    draw_window_frame(windows.action_log, "combat action log");
-    mvwprintw(windows.action_log, 1, 2, "frame pulse %lu", frame_id);
-    wattron(windows.action_log, COLOR_PAIR(color_artifact) | A_BOLD);
-    mvwprintw(windows.action_log, 2, 2, "solar core holder: %d", snapshot->solar_core_holder);
-    mvwprintw(windows.action_log, 3, 2, "lunar blade holder: %d", snapshot->lunar_blade_holder);
-    mvwprintw(windows.action_log, 4, 2, "eclipse relic holder: %d", snapshot->eclipse_relic_holder);
-    wattroff(windows.action_log, COLOR_PAIR(color_artifact) | A_BOLD);
+int enemy_stamina_start_col(int width, int hp_bar_length, int st_bar_length) {
+    int desired = 8 + hp_bar_length;
+    int min_col = 6;
+    int required = 1 + st_bar_length;
+    int max_col = width - 2 - required;
+    return clamp_value(desired, min_col, max_col);
+}
+
+void draw_enemy_forces_panel(const hip_snapshot *snapshot) {
+    werase(windows.right_panel);
+    draw_window_frame(windows.right_panel, "enemy_forces");
+    const int enemy_max_hp = 230;
+    int h = getmaxy(windows.right_panel);
+    int w = getmaxx(windows.right_panel);
+    int row = 1;
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (row >= h - 2) {
+            break;
+        }
+        int hp = clamp_value(snapshot->enemy_hp[i], 0, enemy_max_hp);
+        int st = clamp_value(snapshot->enemy_stamina[i], 0, enemy_stamina_cap);
+        int bar_width = (w - 20) / 2;
+        if (bar_width < 5) {
+            bar_width = 5;
+        }
+        char hp_bar[64];
+        char st_bar[64];
+        draw_bar(hp_bar, sizeof(hp_bar), hp, enemy_max_hp, bar_width);
+        draw_bar(st_bar, sizeof(st_bar), st, enemy_stamina_cap, bar_width);
+        int hp_len = static_cast<int>(strlen(hp_bar));
+        int st_len = static_cast<int>(strlen(st_bar));
+        int st_col = enemy_stamina_start_col(w, hp_len, st_len);
+        wattron(windows.right_panel, A_BOLD);
+        mvwprintw(windows.right_panel, row, 2, "e%d", i + 1);
+        wattroff(windows.right_panel, A_BOLD);
+        wattron(windows.right_panel, COLOR_PAIR(color_enemy_hp) | A_BOLD);
+        mvwprintw(windows.right_panel, row, 6, "h%s", hp_bar);
+        wattroff(windows.right_panel, COLOR_PAIR(color_enemy_hp) | A_BOLD);
+        wattron(windows.right_panel, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
+        mvwprintw(windows.right_panel, row, st_col, "s%s", st_bar);
+        wattroff(windows.right_panel, COLOR_PAIR(color_enemy_stamina) | A_BOLD);
+        row++;
+    }
+}
+
+void draw_combat_arena_panel(const hip_snapshot *snapshot, unsigned long frame_id) {
+    append_action_history_line(snapshot->action_log);
+    werase(windows.center_panel);
+    draw_window_frame(windows.center_panel, "combat_arena");
+    int h = getmaxy(windows.center_panel);
+    int w = getmaxx(windows.center_panel);
+    time_t now = time(nullptr);
+    wattron(windows.center_panel, A_BOLD);
+    mvwprintw(windows.center_panel, 1, 2, "frame:%lu time:%ld", frame_id, static_cast<long>(now));
+    wattroff(windows.center_panel, A_BOLD);
     int living_players = 0;
     int active_enemies = 0;
     for (int i = 0; i < game_state::max_players; ++i) {
@@ -1057,29 +1097,59 @@ void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
             active_enemies++;
         }
     }
-    mvwprintw(windows.action_log, 6, 2, "squad alive: %d/%d", living_players, game_state::max_players);
-    mvwprintw(windows.action_log, 7, 2, "enemy active: %d/%d", active_enemies, game_state::max_enemies);
-    mvwprintw(windows.action_log, 8, 2, "last: %s", snapshot->action_log);
-    int turn_player = find_turn_player_from_snapshot(snapshot);
-    if (turn_player >= 0) {
-        mvwprintw(
-            windows.action_log,
-            9,
-            2,
-            "player %d turn: 1)strike 2)exhaust 3)heal 4)skip",
-            turn_player + 1
-        );
-        mvwprintw(windows.action_log, 10, 2, "pickup: 5)pick up drop");
-        mvwprintw(windows.action_log, 11, 2, "ultimate: 6)freeze bots");
-        mvwprintw(windows.action_log, 12, 2, "stun: 7)stun attack");
-    } else {
-        mvwprintw(windows.action_log, 9, 2, "waiting: no player has 100 stamina yet");
-        mvwprintw(windows.action_log, 10, 2, "pickup: ready on turn only");
-        mvwprintw(windows.action_log, 11, 2, "ultimate: ready on turn only");
-        mvwprintw(windows.action_log, 12, 2, "stun: ready on turn only");
+    mvwprintw(windows.center_panel, 2, 2, "alive %d/%d enemies %d/%d", living_players, game_state::max_players, active_enemies, game_state::max_enemies);
+    wattron(windows.center_panel, COLOR_PAIR(color_artifact) | A_BOLD);
+    mvwprintw(windows.center_panel, 4, 2, "global relics");
+    mvwprintw(windows.center_panel, 5, 2, "solar_core holder: %d", snapshot->solar_core_holder);
+    mvwprintw(windows.center_panel, 6, 2, "lunar_blade holder: %d", snapshot->lunar_blade_holder);
+    wattroff(windows.center_panel, COLOR_PAIR(color_artifact) | A_BOLD);
+    mvwprintw(windows.center_panel, 8, 2, "action log");
+    int log_top = 9;
+    int log_rows = h - log_top - 2;
+    if (log_rows < 1) {
+        log_rows = 1;
     }
-    mvwprintw(windows.action_log, 13, 2, "drop id: %d", snapshot->current_dropped_weapon);
-    mvwprintw(windows.action_log, 14, 2, "input: q quits hip");
+    int max_scroll = action_history_count - 1;
+    if (max_scroll < 0) {
+        max_scroll = 0;
+    }
+    action_scroll_offset = clamp_value(action_scroll_offset, 0, max_scroll);
+    int newest_index = action_history_count - 1 - action_scroll_offset;
+    for (int row = 0; row < log_rows; ++row) {
+        int history_index = newest_index - (log_rows - 1 - row);
+        int y = log_top + row;
+        if (y >= h - 1) {
+            break;
+        }
+        if (history_index < 0 || history_index >= action_history_count) {
+            continue;
+        }
+        int ring_index = (action_history_start + history_index) % action_history_capacity;
+        mvwprintw(windows.center_panel, y, 2, "%-*.*s", w - 4, w - 4, action_history[ring_index]);
+    }
+    mvwprintw(windows.center_panel, h - 2, 2, "scroll up/down");
+}
+
+void draw_bottom_bar() {
+    werase(windows.bottom_bar);
+    wattron(windows.bottom_bar, A_REVERSE | A_BOLD);
+    mvwprintw(
+        windows.bottom_bar,
+        0,
+        0,
+        " [1]strike [2]exhaust [3]heal [5]pickup [6]ultimate [7]stun [q]quit [up/down]logs "
+    );
+    wattroff(windows.bottom_bar, A_REVERSE | A_BOLD);
+}
+
+void handle_resize_locked() {
+    resize_requested = 0;
+    endwin();
+    refresh();
+    clear();
+    destroy_windows();
+    ensure_windows();
+    clearok(stdscr, TRUE);
 }
 
 void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
@@ -1087,6 +1157,9 @@ void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
     if (!ncurses_ready) {
         pthread_mutex_unlock(&ncurses_lock);
         return;
+    }
+    if (resize_requested) {
+        handle_resize_locked();
     }
     if (!ensure_windows()) {
         pthread_mutex_unlock(&ncurses_lock);
@@ -1096,16 +1169,14 @@ void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
         full_redraw_requested = 0;
         clearok(stdscr, TRUE);
     }
-    draw_system_status(snapshot, frame_id);
-    draw_players(snapshot);
-    draw_enemies(snapshot);
-    draw_inventory(snapshot);
-    draw_action_log(snapshot, frame_id);
-    wnoutrefresh(windows.status);
-    wnoutrefresh(windows.players);
-    wnoutrefresh(windows.enemies);
-    wnoutrefresh(windows.inventory);
-    wnoutrefresh(windows.action_log);
+    draw_player_squad_panel(snapshot);
+    draw_combat_arena_panel(snapshot, frame_id);
+    draw_enemy_forces_panel(snapshot);
+    draw_bottom_bar();
+    wnoutrefresh(windows.left_panel);
+    wnoutrefresh(windows.center_panel);
+    wnoutrefresh(windows.right_panel);
+    wnoutrefresh(windows.bottom_bar);
     doupdate();
     pthread_mutex_unlock(&ncurses_lock);
 }
@@ -1126,7 +1197,11 @@ void *render_loop(void *) {
             break;
         }
         render_all(&snapshot, frame_id++);
-        usleep(frame_sleep_us);
+        while (usleep(frame_sleep_us) == -1 && errno == EINTR) {
+            if (!running) {
+                break;
+            }
+        }
     }
     return nullptr;
 }
@@ -1147,6 +1222,14 @@ void *player_input_loop(void *) {
             running = 0;
             break;
         }
+        if (key == KEY_UP) {
+            action_scroll_offset++;
+        } else if (key == KEY_DOWN) {
+            action_scroll_offset--;
+            if (action_scroll_offset < 0) {
+                action_scroll_offset = 0;
+            }
+        }
         if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5' || key == '6' || key == '7') {
             handle_player_action(key);
         }
@@ -1163,6 +1246,10 @@ void handle_continue_signal(int) {
     full_redraw_requested = 1;
 }
 
+void handle_resize_signal(int) {
+    resize_requested = 1;
+}
+
 bool register_signals() {
     if (signal(SIGINT, handle_signal) == SIG_ERR) {
         fprintf(stderr, "failed to register sigint handler\n");
@@ -1174,6 +1261,10 @@ bool register_signals() {
     }
     if (signal(SIGCONT, handle_continue_signal) == SIG_ERR) {
         fprintf(stderr, "failed to register sigcont handler\n");
+        return false;
+    }
+    if (signal(SIGWINCH, handle_resize_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigwinch handler\n");
         return false;
     }
     return true;
