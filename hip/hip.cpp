@@ -408,7 +408,7 @@ bool swap_to_long_term(int player_id) {
     return true;
 }
 
-bool allocate_inventory_recursive(int player_id, int weapon_id) {
+bool allocate_inventory_iterative(int player_id, int weapon_id) {
     if (player_id < 0 || player_id >= game_state::max_players) {
         return false;
     }
@@ -416,24 +416,26 @@ bool allocate_inventory_recursive(int player_id, int weapon_id) {
     if (weapon_size <= 0) {
         return false;
     }
-    int start_index = find_contiguous_empty_slots(
-        shared_state->player_primary_inventory[player_id],
-        game_state::inventory_slots,
-        weapon_size
-    );
-    if (start_index >= 0) {
-        write_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, weapon_size, weapon_id);
-        return true;
+    for (int attempt = 0; attempt < game_state::inventory_slots; ++attempt) {
+        int start_index = find_contiguous_empty_slots(
+            shared_state->player_primary_inventory[player_id],
+            game_state::inventory_slots,
+            weapon_size
+        );
+        if (start_index >= 0) {
+            write_weapon_slots(shared_state->player_primary_inventory[player_id], start_index, weapon_size, weapon_id);
+            return true;
+        }
+        if (!swap_to_long_term(player_id)) {
+            return false;
+        }
     }
-    if (!swap_to_long_term(player_id)) {
-        return false;
-    }
-    return allocate_inventory_recursive(player_id, weapon_id);
+    return false;
 }
 
 bool allocate_inventory(int player_id, int weapon_id) {
     swap_happened_last = false;
-    return allocate_inventory_recursive(player_id, weapon_id);
+    return allocate_inventory_iterative(player_id, weapon_id);
 }
 
 void write_pickup_log(int player_id, int weapon_id, bool success) {

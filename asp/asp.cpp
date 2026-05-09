@@ -116,13 +116,28 @@ bool register_asp_pid() {
     return true;
 }
 
-int find_living_player() {
-    for (int i = 0; i < game_state::max_players; ++i) {
+int collect_living_players(int *player_indices, int capacity) {
+    int count = 0;
+    for (int i = 0; i < game_state::max_players && count < capacity; ++i) {
         if (shared_state->player_hp[i] > 0) {
-            return i;
+            player_indices[count++] = i;
         }
     }
-    return -1;
+    return count;
+}
+
+int pick_random_living_player(const int *player_indices, int player_count) {
+    if (player_count <= 0) {
+        return -1;
+    }
+    int random_index = rand() % player_count;
+    return player_indices[random_index];
+}
+
+int find_living_player() {
+    int player_indices[game_state::max_players];
+    int player_count = collect_living_players(player_indices, game_state::max_players);
+    return pick_random_living_player(player_indices, player_count);
 }
 
 void write_attack_log(int enemy_id, int player_id) {
@@ -153,6 +168,8 @@ void perform_enemy_attack(int enemy_id, int player_id) {
 }
 
 void perform_enemy_stun_attack(int enemy_id, int player_id) {
+    int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
+    shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     pid_t hip_pid = shared_state->hip_pid;
     pid_t arbiter_pid = shared_state->arbiter_pid;
     if (hip_pid > 0) {
@@ -219,7 +236,14 @@ bool register_signals() {
 }
 
 bool start_npc_threads() {
-    for (int i = 0; i < game_state::max_enemies; ++i) {
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
         npc_ids[i] = i;
         if (pthread_create(&npc_threads[i], nullptr, npc_logic_loop, &npc_ids[i]) != 0) {
             print_errno("pthread_create failed");
