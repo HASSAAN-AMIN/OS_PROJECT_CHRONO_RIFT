@@ -170,11 +170,7 @@ void perform_enemy_attack(int enemy_id, int player_id) {
 void perform_enemy_stun_attack(int enemy_id, int player_id) {
     int next_hp = shared_state->player_hp[player_id] - enemy_attack_damage;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
-    pid_t hip_pid = shared_state->hip_pid;
     pid_t arbiter_pid = shared_state->arbiter_pid;
-    if (hip_pid > 0) {
-        kill(hip_pid, SIGSTOP);
-    }
     if (arbiter_pid > 0) {
         kill(arbiter_pid, SIGUSR2);
     }
