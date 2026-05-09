@@ -1005,6 +1005,8 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     if (es.dead) {
         border_pair = pair_border_dead;
         border_extra = A_BOLD;
+    } else if (!is_player) {
+        border_pair = pair_border_active;
     } else if (es.turn) {
         border_pair = pair_border_active;
         border_extra = A_BOLD;
@@ -1883,7 +1885,7 @@ void init_color_pairs() {
     int c_status_bg = COLOR_BLACK;
     int c_artifact_bg = COLOR_BLACK;
     int c_banner_1 = COLOR_RED;
-    int c_banner_2 = COLOR_YELLOW;
+    int c_banner_2 = COLOR_BLUE;
     int c_banner_3 = COLOR_GREEN;
     int c_banner_4 = COLOR_CYAN;
     int c_banner_5 = COLOR_MAGENTA;
@@ -1916,7 +1918,7 @@ void init_color_pairs() {
         init_color(c_status_bg, 15, 26, 44);
         init_color(c_artifact_bg, 14, 24, 36);
         init_color(c_banner_1, 90, 22, 22);
-        init_color(c_banner_2, 90, 55, 18);
+        init_color(c_banner_2, 22, 52, 88);
         init_color(c_banner_3, 28, 70, 24);
         init_color(c_banner_4, 20, 55, 88);
         init_color(c_banner_5, 62, 20, 90);
@@ -1924,10 +1926,10 @@ void init_color_pairs() {
 
     init_pair(pair_default, COLOR_WHITE, -1);
     init_pair(pair_border_normal, COLOR_CYAN, -1);
-    init_pair(pair_border_active, COLOR_YELLOW, -1);
+    init_pair(pair_border_active, COLOR_CYAN, -1);
     init_pair(pair_border_dead, COLOR_RED, -1);
     init_pair(pair_hp_high, COLOR_GREEN, -1);
-    init_pair(pair_hp_med, COLOR_YELLOW, -1);
+    init_pair(pair_hp_med, COLOR_CYAN, -1);
     init_pair(pair_hp_low, COLOR_MAGENTA, -1);
     init_pair(pair_hp_critical, COLOR_RED, -1);
     init_pair(pair_stamina, COLOR_CYAN, -1);
@@ -1935,7 +1937,7 @@ void init_color_pairs() {
     init_pair(pair_log, COLOR_WHITE, -1);
     init_pair(pair_status_ok, COLOR_GREEN, -1);
     init_pair(pair_status_warn, COLOR_RED, -1);
-    init_pair(pair_artifact_solar, COLOR_YELLOW, -1);
+    init_pair(pair_artifact_solar, COLOR_CYAN, -1);
     init_pair(pair_artifact_lunar, COLOR_CYAN, -1);
     init_pair(pair_artifact_eclipse, COLOR_MAGENTA, -1);
     init_pair(pair_artifact_ground, COLOR_WHITE, -1);
@@ -1945,14 +1947,14 @@ void init_color_pairs() {
     init_pair(pair_inv_venom, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(pair_inv_obsidian, COLOR_WHITE, COLOR_BLACK);
     init_pair(pair_inv_frost, COLOR_BLUE, COLOR_BLACK);
-    init_pair(pair_inv_thunder, COLOR_YELLOW, COLOR_BLACK);
+    init_pair(pair_inv_thunder, COLOR_BLUE, COLOR_BLACK);
     init_pair(pair_inv_iron, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_inv_solar, COLOR_YELLOW, COLOR_BLACK);
+    init_pair(pair_inv_solar, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_inv_lunar, COLOR_CYAN, COLOR_BLACK);
     init_pair(pair_inv_eclipse, COLOR_MAGENTA, COLOR_BLACK);
     init_pair(pair_panel_title, COLOR_MAGENTA, -1);
     init_pair(pair_arena_title, COLOR_CYAN, -1);
-    init_pair(pair_banner, COLOR_WHITE, -1);
+    init_pair(pair_banner, COLOR_CYAN, -1);
     init_pair(pair_kill_counter, COLOR_GREEN, -1);
     init_pair(pair_overlay_win, COLOR_GREEN, COLOR_BLACK);
     init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
@@ -1964,9 +1966,9 @@ void init_color_pairs() {
     init_pair(pair_bg_arena, COLOR_WHITE, c_arena_bg);
     init_pair(pair_bg_enemy, COLOR_WHITE, c_enemy_bg);
     init_pair(pair_bg_footer, COLOR_WHITE, c_footer_bg);
-    init_pair(pair_title_player, COLOR_YELLOW, c_player_bg);
-    init_pair(pair_title_enemy, COLOR_YELLOW, c_enemy_bg);
-    init_pair(pair_title_arena, COLOR_YELLOW, c_arena_bg);
+    init_pair(pair_title_player, COLOR_WHITE, c_player_bg);
+    init_pair(pair_title_enemy, COLOR_CYAN, c_enemy_bg);
+    init_pair(pair_title_arena, COLOR_MAGENTA, c_arena_bg);
     init_pair(pair_bg_player_box, COLOR_WHITE, c_player_box_bg);
     init_pair(pair_bg_enemy_box, COLOR_WHITE, c_enemy_box_bg);
     init_pair(pair_bg_timeline, COLOR_WHITE, c_timeline_bg);
@@ -1979,12 +1981,12 @@ void init_color_pairs() {
     init_pair(pair_bg_banner_4, COLOR_WHITE, c_banner_4);
     init_pair(pair_bg_banner_5, COLOR_WHITE, c_banner_5);
     init_pair(pair_border_v1, COLOR_CYAN, -1);
-    init_pair(pair_border_v2, COLOR_YELLOW, -1);
+    init_pair(pair_border_v2, COLOR_BLUE, -1);
     init_pair(pair_border_v3, COLOR_GREEN, -1);
     init_pair(pair_border_v4, COLOR_MAGENTA, -1);
     init_pair(pair_border_v5, COLOR_WHITE, -1);
     init_pair(pair_border_v6, COLOR_BLUE, -1);
-    init_pair(pair_border_v7, COLOR_RED, -1);
+    init_pair(pair_border_v7, COLOR_CYAN, -1);
 }
 
 bool init_tui() {
