@@ -778,9 +778,6 @@ void perform_ultimate(int player_id) {
     if (arbiter_pid_local > 0) {
         kill(arbiter_pid_local, SIGUSR1);
     }
-    if (lock_memory()) {
-        unlock_memory();
-    }
 }
 
 void perform_stun(int player_id) {
@@ -829,9 +826,6 @@ void perform_stun(int player_id) {
     }
     if (arbiter_pid_local > 0) {
         kill(arbiter_pid_local, SIGUSR2);
-    }
-    if (lock_memory()) {
-        unlock_memory();
     }
 }
 
@@ -1716,7 +1710,6 @@ void render_frame(const world_snapshot &snap) {
     pthread_mutex_lock(&ncurses_lock);
     if (resize_pending) {
         resize_pending = 0;
-        endwin();
         refresh();
         clear();
     }

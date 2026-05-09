@@ -265,7 +265,7 @@ int second_last_digit(int value) {
 }
 
 int roll_player_hp() {
-    return active_roll_number + 100 + (rand() % 901);
+    return 880 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
@@ -289,18 +289,32 @@ int enemy_damage_value() {
 }
 
 void initialize_players() {
-    int per_player_speed = 100 / game_state::max_players;
+    int player_count = shared_state->active_player_count;
+    if (player_count <= 0 || player_count > game_state::max_players) {
+        player_count = game_state::max_players;
+    }
+    int per_player_speed = 100 / player_count;
     if (per_player_speed < 1) {
         per_player_speed = 1;
     }
     for (int i = 0; i < game_state::max_players; ++i) {
-        shared_state->player_hp[i] = roll_player_hp();
-        shared_state->player_max_hp[i] = shared_state->player_hp[i];
-        shared_state->player_speed[i] = per_player_speed;
-        shared_state->player_stamina[i] = 0;
-        shared_state->player_damage[i] = player_damage_value();
+        if (i < player_count) {
+            shared_state->player_hp[i] = roll_player_hp();
+            shared_state->player_max_hp[i] = shared_state->player_hp[i];
+            shared_state->player_speed[i] = per_player_speed;
+            shared_state->player_stamina[i] = 0;
+            shared_state->player_damage[i] = player_damage_value();
+        } else {
+            shared_state->player_hp[i] = 0;
+            shared_state->player_max_hp[i] = 0;
+            shared_state->player_speed[i] = 0;
+            shared_state->player_stamina[i] = 0;
+            shared_state->player_damage[i] = 0;
+        }
     }
-    shared_state->active_player_count = game_state::max_players;
+    if (shared_state->active_player_count <= 0) {
+        shared_state->active_player_count = player_count;
+    }
 }
 
 void initialize_enemies() {
