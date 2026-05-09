@@ -69,6 +69,7 @@ struct window_set {
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
 volatile sig_atomic_t running = 1;
+volatile sig_atomic_t full_redraw_requested = 0;
 pthread_t render_thread;
 pthread_t input_thread;
 bool ncurses_ready = false;
@@ -990,7 +991,10 @@ void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
         pthread_mutex_unlock(&ncurses_lock);
         return;
     }
-    clear();
+    if (full_redraw_requested) {
+        full_redraw_requested = 0;
+        clearok(stdscr, TRUE);
+    }
     draw_system_status(snapshot, frame_id);
     draw_players(snapshot);
     draw_enemies(snapshot);
@@ -1056,6 +1060,10 @@ void handle_signal(int) {
     running = 0;
 }
 
+void handle_continue_signal(int) {
+    full_redraw_requested = 1;
+}
+
 bool register_signals() {
     if (signal(SIGINT, handle_signal) == SIG_ERR) {
         fprintf(stderr, "failed to register sigint handler\n");
@@ -1063,6 +1071,10 @@ bool register_signals() {
     }
     if (signal(SIGTERM, handle_signal) == SIG_ERR) {
         fprintf(stderr, "failed to register sigterm handler\n");
+        return false;
+    }
+    if (signal(SIGCONT, handle_continue_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigcont handler\n");
         return false;
     }
     return true;
