@@ -25,6 +25,11 @@ game_state *shared_state = nullptr;
 bool semaphores_ready = false;
 bool resource_lock_ready = false;
 pthread_t deadlock_monitor_thread;
+volatile sig_atomic_t ultimate_triggered = 0;
+volatile sig_atomic_t ultimate_ended = 0;
+volatile sig_atomic_t stun_triggered = 0;
+volatile sig_atomic_t stun_ended = 0;
+volatile sig_atomic_t alarm_mode = 0;
 
 void print_errno(const char *action) {
     fprintf(stderr, "%s: %s\n", action, strerror(errno));
@@ -140,6 +145,7 @@ void clear_state() {
     shared_state->active_enemy_count = 0;
     shared_state->arbiter_pid = 0;
     shared_state->asp_pid = 0;
+    shared_state->hip_pid = 0;
     shared_state->action_log[0] = '\0';
 }
 
@@ -255,8 +261,28 @@ bool tick_stamina_progression() {
     return true;
 }
 
+void process_signal_logs() {
+    if (ultimate_triggered) {
+        ultimate_triggered = 0;
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered! asp frozen for 10s");
+    }
+    if (ultimate_ended) {
+        ultimate_ended = 0;
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate ended, asp resumed");
+    }
+    if (stun_triggered) {
+        stun_triggered = 0;
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun triggered! entities frozen for 3s");
+    }
+    if (stun_ended) {
+        stun_ended = 0;
+        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun ended, entities resumed");
+    }
+}
+
 void run_stamina_loop() {
     while (true) {
+        process_signal_logs();
         sleep(1);
         if (!tick_stamina_progression()) {
             break;
@@ -264,26 +290,37 @@ void run_stamina_loop() {
     }
 }
 
-void copy_action_log_literal(const char *text) {
-    int i = 0;
-    while (i < 255 && text[i] != '\0') {
-        shared_state->action_log[i] = text[i];
-        i++;
-    }
-    shared_state->action_log[i] = '\0';
-}
-
 void handle_alarm_signal(int) {
-    pid_t target_pid = shared_state->asp_pid;
-    if (target_pid > 0) {
-        kill(target_pid, SIGCONT);
+    if (alarm_mode == 1) {
+        pid_t asp_pid = shared_state->asp_pid;
+        if (asp_pid > 0) {
+            kill(asp_pid, SIGCONT);
+        }
+        ultimate_ended = 1;
+    } else if (alarm_mode == 2) {
+        pid_t asp_pid = shared_state->asp_pid;
+        pid_t hip_pid = shared_state->hip_pid;
+        if (asp_pid > 0) {
+            kill(asp_pid, SIGCONT);
+        }
+        if (hip_pid > 0) {
+            kill(hip_pid, SIGCONT);
+        }
+        stun_ended = 1;
     }
-    copy_action_log_literal("ultimate ended, asp resumed");
+    alarm_mode = 0;
 }
 
 void handle_ultimate_signal(int) {
+    alarm_mode = 1;
     alarm(10);
-    copy_action_log_literal("ultimate triggered! asp frozen for 10s");
+    ultimate_triggered = 1;
+}
+
+void handle_stun_signal(int) {
+    alarm_mode = 2;
+    alarm(3);
+    stun_triggered = 1;
 }
 
 bool register_arbiter_pid() {
@@ -446,6 +483,10 @@ bool register_exit_handlers() {
     }
     if (signal(SIGUSR1, handle_ultimate_signal) == SIG_ERR) {
         fprintf(stderr, "failed to register sigusr1 handler\n");
+        return false;
+    }
+    if (signal(SIGUSR2, handle_stun_signal) == SIG_ERR) {
+        fprintf(stderr, "failed to register sigusr2 handler\n");
         return false;
     }
     return true;

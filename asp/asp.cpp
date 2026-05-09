@@ -19,7 +19,6 @@ const char *shared_memory_name = "/chrono_rift_game_state";
 const int enemy_attack_cost = 150;
 const int enemy_attack_damage = 18;
 const int enemy_stun_chance_percent = 20;
-const int stun_duration_seconds = 3;
 const useconds_t idle_sleep_us = 50000;
 
 int shared_memory_fd = -1;
@@ -126,11 +125,6 @@ int find_living_player() {
     return -1;
 }
 
-bool enemy_is_stunned_locked(int enemy_id) {
-    time_t now = time(nullptr);
-    return now < shared_state->stun_end_time[enemy_id];
-}
-
 void write_attack_log(int enemy_id, int player_id) {
     snprintf(
         shared_state->action_log,
@@ -159,7 +153,14 @@ void perform_enemy_attack(int enemy_id, int player_id) {
 }
 
 void perform_enemy_stun_attack(int enemy_id, int player_id) {
-    shared_state->player_stun_end_time[player_id] = time(nullptr) + stun_duration_seconds;
+    pid_t hip_pid = shared_state->hip_pid;
+    pid_t arbiter_pid = shared_state->arbiter_pid;
+    if (hip_pid > 0) {
+        kill(hip_pid, SIGSTOP);
+    }
+    if (arbiter_pid > 0) {
+        kill(arbiter_pid, SIGUSR2);
+    }
     shared_state->enemy_stamina[enemy_id] = 0;
     write_enemy_stun_log(enemy_id, player_id);
 }
@@ -193,9 +194,7 @@ void *npc_logic_loop(void *arg) {
     int enemy_id = *static_cast<int *>(arg);
     while (running) {
         if (lock_state()) {
-            if (!enemy_is_stunned_locked(enemy_id)) {
-                run_enemy_step_locked(enemy_id);
-            }
+            run_enemy_step_locked(enemy_id);
             unlock_state();
         }
         usleep(idle_sleep_us);

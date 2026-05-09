@@ -38,7 +38,6 @@ const int player_max_hp = 1780;
 const int solar_core_inventory_id = 10;
 const int lunar_blade_inventory_id = 11;
 const int player_stun_damage = 15;
-const int stun_duration_seconds = 3;
 bool swap_happened_last = false;
 
 struct hip_snapshot {
@@ -108,6 +107,22 @@ bool map_shared_memory() {
     }
     shared_state = static_cast<game_state *>(mapped);
     printf("shared memory mapped\n");
+    return true;
+}
+
+bool register_hip_pid() {
+    while (sem_wait(&shared_state->state_lock) != 0) {
+        if (errno == EINTR) {
+            continue;
+        }
+        print_errno("sem_wait failed");
+        return false;
+    }
+    shared_state->hip_pid = getpid();
+    if (sem_post(&shared_state->state_lock) != 0) {
+        print_errno("sem_post failed");
+        return false;
+    }
     return true;
 }
 
@@ -191,10 +206,8 @@ bool copy_snapshot(hip_snapshot *snapshot) {
 }
 
 int find_turn_player_locked() {
-    time_t now = time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
-        bool stunned = now < shared_state->player_stun_end_time[i];
-        if (!stunned && shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
+        if (shared_state->player_hp[i] > 0 && shared_state->player_stamina[i] >= player_turn_stamina) {
             return i;
         }
     }
@@ -496,7 +509,7 @@ bool player_has_artifact_locked(int player_id, int artifact_id) {
     return false;
 }
 
-void apply_ultimate_locked(int player_id) {
+bool apply_ultimate_locked(int player_id) {
     bool has_solar = player_has_artifact_locked(player_id, solar_core_inventory_id);
     bool has_lunar = player_has_artifact_locked(player_id, lunar_blade_inventory_id);
     if (!has_solar || !has_lunar) {
@@ -506,7 +519,7 @@ void apply_ultimate_locked(int player_id) {
             "player %d ultimate failed: missing artifacts",
             player_id + 1
         );
-        return;
+        return true;
     }
     pid_t asp_pid = shared_state->asp_pid;
     pid_t arbiter_pid = shared_state->arbiter_pid;
@@ -517,11 +530,18 @@ void apply_ultimate_locked(int player_id) {
             "player %d ultimate failed: process pids missing",
             player_id + 1
         );
-        return;
+        return true;
+    }
+    if (!unlock_memory()) {
+        return true;
     }
     kill(asp_pid, SIGSTOP);
+    if (!lock_memory()) {
+        return false;
+    }
     kill(arbiter_pid, SIGUSR1);
     shared_state->player_stamina[player_id] = 0;
+    return true;
 }
 
 void apply_stun_attack_locked(int player_id) {
@@ -533,7 +553,14 @@ void apply_stun_attack_locked(int player_id) {
     }
     int next_hp = shared_state->enemy_hp[target_enemy] - player_stun_damage;
     shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
-    shared_state->stun_end_time[target_enemy] = time(nullptr) + stun_duration_seconds;
+    pid_t asp_pid = shared_state->asp_pid;
+    pid_t arbiter_pid = shared_state->arbiter_pid;
+    if (asp_pid > 0) {
+        kill(asp_pid, SIGSTOP);
+    }
+    if (arbiter_pid > 0) {
+        kill(arbiter_pid, SIGUSR2);
+    }
     shared_state->player_stamina[player_id] = 0;
     snprintf(
         shared_state->action_log,
@@ -564,7 +591,9 @@ void handle_player_action(int key) {
     } else if (key == '5') {
         apply_pickup_drop_locked(active_player);
     } else if (key == '6') {
-        apply_ultimate_locked(active_player);
+        if (!apply_ultimate_locked(active_player)) {
+            return;
+        }
     } else if (key == '7') {
         apply_stun_attack_locked(active_player);
     }
@@ -572,10 +601,8 @@ void handle_player_action(int key) {
 }
 
 int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
-    time_t now = time(nullptr);
     for (int i = 0; i < game_state::max_players; ++i) {
-        bool stunned = now < snapshot->player_stun_end_time[i];
-        if (!stunned && snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
+        if (snapshot->player_hp[i] > 0 && snapshot->player_stamina[i] >= player_turn_stamina) {
             return i;
         }
     }
@@ -778,19 +805,13 @@ void draw_system_status(const hip_snapshot *snapshot, unsigned long frame_id) {
 void draw_players(const hip_snapshot *snapshot) {
     werase(windows.players);
     draw_window_frame(windows.players, "player squad");
-    time_t now = time(nullptr);
-    int w = getmaxx(windows.players);
     int row = 1;
     for (int i = 0; i < game_state::max_players; ++i) {
         char hp_label[32];
         char stamina_label[32];
         snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
         snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
-        int hp_row = row++;
-        draw_stat_line(windows.players, hp_row, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp);
-        if (now < snapshot->player_stun_end_time[i]) {
-            mvwprintw(windows.players, hp_row, w - 11, "[STUNNED]");
-        }
+        draw_stat_line(windows.players, row++, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp);
         draw_stat_line(
             windows.players, row++, stamina_label, snapshot->player_stamina[i], max_stat_value, 18, color_player_stamina
         );
@@ -800,7 +821,6 @@ void draw_players(const hip_snapshot *snapshot) {
 void draw_enemies(const hip_snapshot *snapshot) {
     werase(windows.enemies);
     draw_window_frame(windows.enemies, "enemy bots");
-    time_t now = time(nullptr);
     int h = 0;
     int w = 0;
     getmaxyx(windows.enemies, h, w);
@@ -826,9 +846,6 @@ void draw_enemies(const hip_snapshot *snapshot) {
         wattron(windows.enemies, COLOR_PAIR(color_enemy_stamina));
         mvwprintw(windows.enemies, row, 8 + static_cast<int>(strlen(hp_bar)), "s%s", st_bar);
         wattroff(windows.enemies, COLOR_PAIR(color_enemy_stamina));
-        if (now < snapshot->stun_end_time[i]) {
-            mvwprintw(windows.enemies, row, w - 11, "[STUNNED]");
-        }
         row++;
     }
 }
@@ -1079,6 +1096,10 @@ int main() {
     }
     if (!map_shared_memory()) {
         close_shared_memory_fd();
+        return 1;
+    }
+    if (!register_hip_pid()) {
+        cleanup();
         return 1;
     }
     if (!start_render_thread()) {

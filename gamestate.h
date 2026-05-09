@@ -45,6 +45,7 @@ struct game_state {
     int active_enemy_count;
     pid_t arbiter_pid;
     pid_t asp_pid;
+    pid_t hip_pid;
     char action_log[256];
 
     pthread_mutex_t resource_lock;
