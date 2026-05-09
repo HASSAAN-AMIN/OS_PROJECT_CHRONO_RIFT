@@ -237,11 +237,9 @@ bool register_signals() {
 
 bool start_npc_threads() {
     int enemy_count = shared_state->active_enemy_count;
-    if (enemy_count < 0) {
-        enemy_count = 0;
-    }
-    if (enemy_count > game_state::max_enemies) {
-        enemy_count = game_state::max_enemies;
+    if (enemy_count < 2 || enemy_count > game_state::max_enemies) {
+        fprintf(stderr, "invalid active_enemy_count: %d\n", enemy_count);
+        return false;
     }
     for (int i = 0; i < enemy_count; ++i) {
         npc_ids[i] = i;

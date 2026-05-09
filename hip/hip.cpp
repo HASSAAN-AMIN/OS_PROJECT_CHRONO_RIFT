@@ -459,6 +459,27 @@ void write_pickup_log(int player_id, int weapon_id, bool success) {
     }
 }
 
+int random_drop_weapon_id() {
+    int roll = rand() % 3;
+    if (roll == 0) {
+        return game_state::splinter_stick_id;
+    }
+    if (roll == 1) {
+        return game_state::venom_dagger_id;
+    }
+    return game_state::iron_halberd_id;
+}
+
+void assign_drop_on_enemy_death_locked(int enemy_id) {
+    if (enemy_id < 0 || enemy_id >= game_state::max_enemies) {
+        return;
+    }
+    if (shared_state->enemy_hp[enemy_id] > 0) {
+        return;
+    }
+    shared_state->current_dropped_weapon = random_drop_weapon_id();
+}
+
 void apply_strike_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
@@ -468,6 +489,20 @@ void apply_strike_locked(int player_id) {
     }
     int next_hp = shared_state->enemy_hp[target_enemy] - player_base_damage;
     shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
+    assign_drop_on_enemy_death_locked(target_enemy);
+    shared_state->player_stamina[player_id] = 0;
+}
+
+void apply_weapon_attack_locked(int player_id) {
+    int enemy_indices[game_state::max_enemies];
+    int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
+    int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
+    if (target_enemy < 0) {
+        return;
+    }
+    int next_hp = shared_state->enemy_hp[target_enemy] - player_base_damage;
+    shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
+    assign_drop_on_enemy_death_locked(target_enemy);
     shared_state->player_stamina[player_id] = 0;
 }
 
@@ -568,9 +603,8 @@ void apply_stun_attack_locked(int player_id) {
     snprintf(
         shared_state->action_log,
         sizeof(shared_state->action_log),
-        "player %d stun hit enemy %d for 15",
-        player_id + 1,
-        target_enemy + 1
+        "player %d used stun: all enemies frozen for 3s",
+        player_id + 1
     );
 }
 
@@ -584,7 +618,7 @@ void handle_player_action(int key) {
         return;
     }
     if (key == '1') {
-        apply_strike_locked(active_player);
+        apply_weapon_attack_locked(active_player);
     } else if (key == '2') {
         apply_exhaust_locked(active_player);
     } else if (key == '3') {
