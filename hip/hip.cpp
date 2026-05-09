@@ -29,14 +29,14 @@ const int color_empty_slot = 7;
 const int color_solar_slot = 8;
 const int color_lunar_slot = 9;
 const int player_turn_stamina = 100;
-const int enemy_turn_stamina = 150;
+const int enemy_stamina_cap = 150;
 const int player_base_damage = 10;
 const int player_exhaust_damage = 10;
 const int player_skip_stamina = 50;
 const int player_heal_amount = 178;
 const int player_max_hp = 1780;
-const int solar_core_inventory_id = 10;
-const int lunar_blade_inventory_id = 11;
+const int solar_core_inventory_id = game_state::solar_core_id;
+const int lunar_blade_inventory_id = game_state::lunar_blade_id;
 const int player_stun_damage = 15;
 bool swap_happened_last = false;
 
@@ -252,7 +252,7 @@ int weapon_size_from_id(int weapon_id) {
 }
 
 const char *weapon_name_from_id(int weapon_id) {
-    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+    if (weapon_id == game_state::splinter_stick_id) {
         return "splinter";
     }
     if (weapon_id == game_state::venom_dagger_id) {
@@ -261,26 +261,26 @@ const char *weapon_name_from_id(int weapon_id) {
     if (weapon_id == game_state::iron_halberd_id) {
         return "halberd";
     }
-    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+    if (weapon_id == game_state::solar_core_id) {
         return "solar_core";
     }
-    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+    if (weapon_id == game_state::lunar_blade_id) {
         return "lunar_blnd";
     }
     return "unknown";
 }
 
 const char *weapon_label_from_id(int weapon_id) {
-    if (weapon_id == 0) {
+    if (weapon_id == game_state::weapon_none) {
         return "[ empty  ]";
     }
-    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+    if (weapon_id == game_state::splinter_stick_id) {
         return "[splinter]";
     }
-    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+    if (weapon_id == game_state::solar_core_id) {
         return "[solar_core]";
     }
-    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+    if (weapon_id == game_state::lunar_blade_id) {
         return "[lunar_blnd]";
     }
     if (weapon_id == game_state::venom_dagger_id) {
@@ -293,16 +293,16 @@ const char *weapon_label_from_id(int weapon_id) {
 }
 
 int weapon_color_from_id(int weapon_id) {
-    if (weapon_id == 0) {
+    if (weapon_id == game_state::weapon_none) {
         return color_empty_slot;
     }
-    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+    if (weapon_id == game_state::solar_core_id) {
         return color_solar_slot;
     }
-    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+    if (weapon_id == game_state::lunar_blade_id) {
         return color_lunar_slot;
     }
-    if (weapon_id == 2 || weapon_id == game_state::splinter_stick_id) {
+    if (weapon_id == game_state::splinter_stick_id) {
         return color_player_hp;
     }
     if (weapon_id == game_state::venom_dagger_id) {
@@ -315,13 +315,13 @@ int weapon_color_from_id(int weapon_id) {
 }
 
 int weapon_attr_from_id(int weapon_id) {
-    if (weapon_id == 0) {
+    if (weapon_id == game_state::weapon_none) {
         return A_DIM;
     }
-    if (weapon_id == 10 || weapon_id == game_state::solar_core_id) {
+    if (weapon_id == game_state::solar_core_id) {
         return A_BOLD;
     }
-    if (weapon_id == 11 || weapon_id == game_state::lunar_blade_id) {
+    if (weapon_id == game_state::lunar_blade_id) {
         return A_BOLD;
     }
     return A_NORMAL;
@@ -478,7 +478,7 @@ void apply_exhaust_locked(int player_id) {
         return;
     }
     int next_stamina = shared_state->enemy_stamina[target_enemy] - player_exhaust_damage;
-    shared_state->enemy_stamina[target_enemy] = clamp_value(next_stamina, 0, enemy_turn_stamina);
+    shared_state->enemy_stamina[target_enemy] = clamp_value(next_stamina, 0, enemy_stamina_cap);
     shared_state->player_stamina[player_id] = 0;
 }
 
@@ -813,7 +813,7 @@ void draw_players(const hip_snapshot *snapshot) {
         char stamina_label[32];
         snprintf(hp_label, sizeof(hp_label), "p%d hp", i + 1);
         snprintf(stamina_label, sizeof(stamina_label), "p%d st", i + 1);
-        draw_stat_line(windows.players, row++, hp_label, snapshot->player_hp[i], max_stat_value, 18, color_player_hp);
+        draw_stat_line(windows.players, row++, hp_label, snapshot->player_hp[i], player_max_hp, 18, color_player_hp);
         draw_stat_line(
             windows.players, row++, stamina_label, snapshot->player_stamina[i], max_stat_value, 18, color_player_stamina
         );
@@ -823,6 +823,7 @@ void draw_players(const hip_snapshot *snapshot) {
 void draw_enemies(const hip_snapshot *snapshot) {
     werase(windows.enemies);
     draw_window_frame(windows.enemies, "enemy bots");
+    const int enemy_max_hp = 230;
     int h = 0;
     int w = 0;
     getmaxyx(windows.enemies, h, w);
@@ -831,7 +832,7 @@ void draw_enemies(const hip_snapshot *snapshot) {
         if (row >= h - 2) {
             break;
         }
-        int hp = clamp_value(snapshot->enemy_hp[i], 0, max_stat_value);
+        int hp = clamp_value(snapshot->enemy_hp[i], 0, enemy_max_hp);
         int st = clamp_value(snapshot->enemy_stamina[i], 0, max_stat_value);
         int bar_width = (w - 20) / 2;
         if (bar_width < 5) {
@@ -839,7 +840,7 @@ void draw_enemies(const hip_snapshot *snapshot) {
         }
         char hp_bar[64];
         char st_bar[64];
-        draw_bar(hp_bar, sizeof(hp_bar), hp, max_stat_value, bar_width);
+        draw_bar(hp_bar, sizeof(hp_bar), hp, enemy_max_hp, bar_width);
         draw_bar(st_bar, sizeof(st_bar), st, max_stat_value, bar_width);
         mvwprintw(windows.enemies, row, 2, "e%d", i + 1);
         wattron(windows.enemies, COLOR_PAIR(color_enemy_hp));
@@ -897,7 +898,6 @@ void draw_inventory_grid(
 
 void draw_inventory(const hip_snapshot *snapshot) {
     werase(windows.inventory);
-    box(windows.inventory, 0, 0);
     draw_window_frame(windows.inventory, "inventory tetris");
     int active_player = find_inventory_player(snapshot);
     int h = getmaxy(windows.inventory);
@@ -943,8 +943,20 @@ void draw_action_log(const hip_snapshot *snapshot, unsigned long frame_id) {
     mvwprintw(windows.action_log, 3, 2, "lunar blade holder: %d", snapshot->lunar_blade_holder);
     mvwprintw(windows.action_log, 4, 2, "eclipse relic holder: %d", snapshot->eclipse_relic_holder);
     wattroff(windows.action_log, COLOR_PAIR(color_artifact) | A_BOLD);
-    mvwprintw(windows.action_log, 6, 2, "squad ready: %d/%d", game_state::max_players, game_state::max_players);
-    mvwprintw(windows.action_log, 7, 2, "enemy active: %d", game_state::max_enemies);
+    int living_players = 0;
+    int active_enemies = 0;
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (snapshot->player_hp[i] > 0) {
+            living_players++;
+        }
+    }
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (snapshot->enemy_hp[i] > 0) {
+            active_enemies++;
+        }
+    }
+    mvwprintw(windows.action_log, 6, 2, "squad alive: %d/%d", living_players, game_state::max_players);
+    mvwprintw(windows.action_log, 7, 2, "enemy active: %d/%d", active_enemies, game_state::max_enemies);
     mvwprintw(windows.action_log, 8, 2, "last: %s", snapshot->action_log);
     int turn_player = find_turn_player_from_snapshot(snapshot);
     if (turn_player >= 0) {
@@ -984,12 +996,12 @@ void render_all(const hip_snapshot *snapshot, unsigned long frame_id) {
     draw_enemies(snapshot);
     draw_inventory(snapshot);
     draw_action_log(snapshot, frame_id);
-    refresh();
-    wrefresh(windows.status);
-    wrefresh(windows.players);
-    wrefresh(windows.enemies);
-    wrefresh(windows.inventory);
-    wrefresh(windows.action_log);
+    wnoutrefresh(windows.status);
+    wnoutrefresh(windows.players);
+    wnoutrefresh(windows.enemies);
+    wnoutrefresh(windows.inventory);
+    wnoutrefresh(windows.action_log);
+    doupdate();
     pthread_mutex_unlock(&ncurses_lock);
 }
 
