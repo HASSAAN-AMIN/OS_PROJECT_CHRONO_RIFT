@@ -218,7 +218,14 @@ bool is_active_enemy(int index) {
 }
 
 void update_player_stamina() {
-    for (int i = 0; i < game_state::max_players; ++i) {
+    int player_count = shared_state->active_player_count;
+    if (player_count < 0) {
+        player_count = 0;
+    }
+    if (player_count > game_state::max_players) {
+        player_count = game_state::max_players;
+    }
+    for (int i = 0; i < player_count; ++i) {
         if (!is_active_player(i)) {
             continue;
         }
@@ -231,7 +238,14 @@ void update_player_stamina() {
 }
 
 void update_enemy_stamina() {
-    for (int i = 0; i < game_state::max_enemies; ++i) {
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
         if (!is_active_enemy(i)) {
             continue;
         }
@@ -436,11 +450,14 @@ void schedule_next_alarm_locked(time_t now) {
 }
 
 void track_enemy_deaths_locked() {
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        if (i >= shared_state->active_enemy_count) {
-            previous_enemy_hp[i] = shared_state->enemy_hp[i];
-            continue;
-        }
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
         int prev = previous_enemy_hp[i];
         int curr = shared_state->enemy_hp[i];
         if (prev > 0 && curr <= 0) {
@@ -461,7 +478,14 @@ void track_enemy_deaths_locked() {
 void update_active_player_locked() {
     int chosen = -1;
     int best_stamina = -1;
-    for (int i = 0; i < game_state::max_players; ++i) {
+    int player_count = shared_state->active_player_count;
+    if (player_count < 0) {
+        player_count = 0;
+    }
+    if (player_count > game_state::max_players) {
+        player_count = game_state::max_players;
+    }
+    for (int i = 0; i < player_count; ++i) {
         if (shared_state->player_hp[i] <= 0) {
             continue;
         }
@@ -475,7 +499,7 @@ void update_active_player_locked() {
         }
     }
     if (chosen < 0) {
-        for (int i = 0; i < game_state::max_players; ++i) {
+        for (int i = 0; i < player_count; ++i) {
             if (shared_state->player_hp[i] > 0) {
                 chosen = i;
                 break;
