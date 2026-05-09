@@ -561,338 +561,67 @@ bool require_full_stamina_locked(int player_id) {
     return shared_state->player_stamina[player_id] >= game_state::player_max_stamina;
 }
 
-void perform_strike(int player_id) {
+int pending_target_for_action_locked(int action) {
+    if (action == game_state::action_strike || action == game_state::action_exhaust ||
+        action == game_state::action_stun || action == game_state::action_use_weapon) {
+        return next_target_enemy_locked();
+    }
+    return -1;
+}
+
+void submit_player_action_request(int player_id, int action) {
     if (!lock_memory()) {
         return;
     }
-    if (!is_player_active_locked(player_id)) {
+    if (player_id < 0 || player_id >= game_state::max_players) {
         unlock_memory();
         return;
     }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d strike: needs full stamina (%d/%d)",
-                 player_id + 1, shared_state->player_stamina[player_id], game_state::player_max_stamina);
+    if (player_id >= shared_state->active_player_count) {
         unlock_memory();
         return;
     }
-    int target = next_target_enemy_locked();
-    if (target < 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d strike: no living enemies", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int dmg = shared_state->player_damage[player_id];
-    shared_state->player_stamina[player_id] = 0;
-    int new_hp = shared_state->enemy_hp[target] - dmg;
-    if (new_hp < 0) {
-        new_hp = 0;
-    }
-    shared_state->enemy_hp[target] = new_hp;
-    if (new_hp == 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d strike: hit enemy %d for %d - enemy defeated",
-                 player_id + 1, target + 1, dmg);
-    } else {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d strike: hit enemy %d for %d damage",
-                 player_id + 1, target + 1, dmg);
-    }
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_strike_%d", player_id + 1, target + 1);
+    int target = pending_target_for_action_locked(action);
+    shared_state->player_pending_action[player_id] = action;
+    shared_state->player_pending_target[player_id] = target;
+    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_action_%d", player_id + 1, action);
     unlock_memory();
+}
+
+void perform_strike(int player_id) {
+    submit_player_action_request(player_id, game_state::action_strike);
 }
 
 void perform_use_weapon(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d use weapon: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int weapon_start = -1;
-    int weapon_size = 0;
-    int weapon_id = find_best_weapon_locked(player_id, &weapon_start, &weapon_size);
-    if (weapon_id == 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d use weapon: inventory is empty", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int target = next_target_enemy_locked();
-    if (target < 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d use weapon: no living enemies", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int dmg = weapon_damage_value(weapon_id);
-    shared_state->player_stamina[player_id] = 0;
-    int new_hp = shared_state->enemy_hp[target] - dmg;
-    if (new_hp < 0) {
-        new_hp = 0;
-    }
-    shared_state->enemy_hp[target] = new_hp;
-    if (new_hp == 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d wielded %s: %d damage on enemy %d - enemy defeated",
-                 player_id + 1, weapon_name(weapon_id), dmg, target + 1);
-    } else {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d wielded %s: %d damage on enemy %d",
-                 player_id + 1, weapon_name(weapon_id), dmg, target + 1);
-    }
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_weapon_%d", player_id + 1, target + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_use_weapon);
 }
 
 void perform_exhaust(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d exhaust: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int target = next_target_enemy_locked();
-    if (target < 0) {
-        unlock_memory();
-        return;
-    }
-    int dmg = shared_state->player_damage[player_id];
-    shared_state->player_stamina[player_id] = 0;
-    int new_st = shared_state->enemy_stamina[target] - dmg;
-    if (new_st < 0) {
-        new_st = 0;
-    }
-    shared_state->enemy_stamina[target] = new_st;
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-             "player %d exhaust: drained enemy %d stamina by %d (now %d)",
-             player_id + 1, target + 1, dmg, new_st);
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_exhaust", player_id + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_exhaust);
 }
 
 void perform_heal(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d heal: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int max_hp = shared_state->player_max_hp[player_id];
-    int restore = max_hp / 10;
-    if (restore < 1) {
-        restore = 1;
-    }
-    int new_hp = shared_state->player_hp[player_id] + restore;
-    if (new_hp > max_hp) {
-        new_hp = max_hp;
-    }
-    shared_state->player_hp[player_id] = new_hp;
-    shared_state->player_stamina[player_id] = 0;
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-             "player %d heal: restored %d hp (%d/%d)",
-             player_id + 1, restore, new_hp, max_hp);
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_heal", player_id + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_heal);
 }
 
 void perform_skip(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d skip: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    shared_state->player_stamina[player_id] = game_state::player_max_stamina / 2;
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-             "player %d skip: stamina to 50%%", player_id + 1);
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_skip", player_id + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_skip);
 }
 
 void perform_pickup(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    int dropped = shared_state->current_dropped_weapon;
-    if (dropped == 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d pickup: nothing on the ground", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int slot = allocate_weapon_iterative_locked(player_id, dropped);
-    if (slot < 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d pickup: cannot fit %s anywhere", player_id + 1, weapon_name(dropped));
-        unlock_memory();
-        return;
-    }
-    shared_state->current_dropped_weapon = 0;
-    if (dropped == game_state::solar_core_id) {
-        shared_state->solar_core_holder = player_id;
-    } else if (dropped == game_state::lunar_blade_id) {
-        shared_state->lunar_blade_holder = player_id;
-    } else if (dropped == game_state::eclipse_relic_id) {
-        shared_state->eclipse_relic_holder = player_id;
-    }
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-             "player %d pickup: acquired %s at slot %d",
-             player_id + 1, weapon_name(dropped), slot + 1);
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_pickup", player_id + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_pickup);
 }
 
 void perform_swap_in(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d swap in: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int swapped = swap_in_from_storage_locked(player_id);
-    shared_state->player_stamina[player_id] = 0;
-    if (swapped <= 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d swap in: storage empty or no fit", player_id + 1);
-    } else {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d swap in: brought back %s (cannot use until next turn)",
-                 player_id + 1, weapon_name(swapped));
-    }
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_swap", player_id + 1);
-    unlock_memory();
+    submit_player_action_request(player_id, game_state::action_swap_in);
 }
 
 void perform_ultimate(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d ultimate: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    bool has_solar = inventory_contains_locked(player_id, game_state::solar_core_id);
-    bool has_lunar = inventory_contains_locked(player_id, game_state::lunar_blade_id);
-    if (!has_solar || !has_lunar) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d ultimate: requires solar core AND lunar blade", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    shared_state->player_stamina[player_id] = 0;
-    pid_t asp_pid_local = shared_state->asp_pid;
-    pid_t arbiter_pid_local = shared_state->arbiter_pid;
-    snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-             "player %d ULTIMATE: arena freezing for 10s", player_id + 1);
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_ultimate", player_id + 1);
-    unlock_memory();
-    if (asp_pid_local > 0) {
-        kill(asp_pid_local, SIGSTOP);
-    }
-    if (arbiter_pid_local > 0) {
-        kill(arbiter_pid_local, SIGUSR1);
-    }
-    if (lock_memory()) {
-        unlock_memory();
-    }
+    submit_player_action_request(player_id, game_state::action_ultimate);
 }
 
 void perform_stun(int player_id) {
-    if (!lock_memory()) {
-        return;
-    }
-    if (!is_player_active_locked(player_id)) {
-        unlock_memory();
-        return;
-    }
-    if (!require_full_stamina_locked(player_id)) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d stun: needs full stamina", player_id + 1);
-        unlock_memory();
-        return;
-    }
-    int target = next_target_enemy_locked();
-    if (target < 0) {
-        unlock_memory();
-        return;
-    }
-    int dmg = shared_state->player_damage[player_id];
-    shared_state->player_stamina[player_id] = 0;
-    shared_state->stun_end_time[target] = time(nullptr) + 3;
-    int new_hp = shared_state->enemy_hp[target] - dmg;
-    if (new_hp < 0) {
-        new_hp = 0;
-    }
-    shared_state->enemy_hp[target] = new_hp;
-    pid_t asp_pid_local = shared_state->asp_pid;
-    pid_t arbiter_pid_local = shared_state->arbiter_pid;
-    if (new_hp == 0) {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d STUN: enemy %d hit for %d - enemy eliminated",
-                 player_id + 1, target + 1, dmg);
-    } else {
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log),
-                 "player %d STUN: enemy %d hit for %d, stunned 3s",
-                 player_id + 1, target + 1, dmg);
-    }
-    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_stun_%d", player_id + 1, target + 1);
-    unlock_memory();
-    if (asp_pid_local > 0) {
-        kill(asp_pid_local, SIGSTOP);
-    }
-    if (arbiter_pid_local > 0) {
-        kill(arbiter_pid_local, SIGUSR2);
-    }
-    if (lock_memory()) {
-        unlock_memory();
-    }
+    submit_player_action_request(player_id, game_state::action_stun);
 }
 
 void send_quit_signals() {
@@ -901,7 +630,6 @@ void send_quit_signals() {
     if (lock_memory()) {
         arbiter_pid_local = shared_state->arbiter_pid;
         asp_pid_local = shared_state->asp_pid;
-        shared_state->outcome = game_state::outcome_quit;
         unlock_memory();
     }
     if (asp_pid_local > 0) {
@@ -1291,7 +1019,7 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         draw_inventory_strip(inv_y + inv_h - 1, inner_x + 1, inner_w - 2, es.inventory, es.dead);
         attron(COLOR_PAIR(pair_panel_title) | A_BOLD);
         mvaddch(inv_y, inner_x + 2, ' ');
-        mvprintw(inv_y, inner_x + 3, "inventroy tetris");
+        mvprintw(inv_y, inner_x + 3, "inventory tetris");
         mvaddch(inv_y, inner_x + 19, ' ');
         attroff(COLOR_PAIR(pair_panel_title) | A_BOLD);
     } else if (inner_h - row >= 1) {

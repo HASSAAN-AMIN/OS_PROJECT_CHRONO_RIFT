@@ -192,12 +192,8 @@ void perform_enemy_stun_attack(int enemy_id, int player_id) {
     int next_hp = shared_state->player_hp[player_id] - dmg;
     shared_state->player_hp[player_id] = clamp_value(next_hp, 0, 99999);
     shared_state->player_stun_end_time[player_id] = time(nullptr) + 3;
-    pid_t arbiter_pid = shared_state->arbiter_pid;
     shared_state->enemy_stamina[enemy_id] = 0;
     write_enemy_stun_log(enemy_id, player_id, dmg);
-    if (arbiter_pid > 0) {
-        kill(arbiter_pid, SIGUSR2);
-    }
 }
 
 void perform_enemy_skip(int enemy_id) {
@@ -211,6 +207,30 @@ bool should_use_stun_attack() {
 
 bool should_skip() {
     return (rand() % 100) < enemy_skip_chance_percent;
+}
+
+void perform_enemy_pickup_drop(int enemy_id) {
+    int dropped = shared_state->current_dropped_weapon;
+    if (dropped == 0) {
+        return;
+    }
+    int holder_id = game_state::max_players + enemy_id;
+    shared_state->current_dropped_weapon = 0;
+    if (dropped == game_state::solar_core_id) {
+        shared_state->solar_core_holder = holder_id;
+    } else if (dropped == game_state::lunar_blade_id) {
+        shared_state->lunar_blade_holder = holder_id;
+    } else if (dropped == game_state::eclipse_relic_id) {
+        shared_state->eclipse_relic_holder = holder_id;
+        shared_state->eclipse_relic_present = 1;
+    }
+    snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "enemy %d pickup: claimed %d",
+        enemy_id + 1,
+        dropped
+    );
 }
 
 void run_enemy_step_locked(int enemy_id) {
@@ -228,6 +248,9 @@ void run_enemy_step_locked(int enemy_id) {
     }
     if (shared_state->outcome != game_state::outcome_ongoing) {
         return;
+    }
+    if (shared_state->current_dropped_weapon != 0) {
+        perform_enemy_pickup_drop(enemy_id);
     }
     if (should_skip()) {
         perform_enemy_skip(enemy_id);

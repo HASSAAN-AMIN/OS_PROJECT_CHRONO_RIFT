@@ -32,9 +32,7 @@ volatile sig_atomic_t arbiter_running = 1;
 volatile sig_atomic_t ultimate_triggered = 0;
 volatile sig_atomic_t ultimate_ended = 0;
 volatile sig_atomic_t stun_triggered = 0;
-volatile sig_atomic_t stun_ended = 0;
 volatile sig_atomic_t asp_frozen = 0;
-volatile sig_atomic_t hip_frozen = 0;
 volatile sig_atomic_t ultimate_requested = 0;
 volatile sig_atomic_t stun_requested = 0;
 volatile sig_atomic_t alarm_fired = 0;
@@ -42,7 +40,6 @@ volatile sig_atomic_t cached_asp_pid = 0;
 volatile sig_atomic_t cached_hip_pid = 0;
 volatile sig_atomic_t deadlock_broken = 0;
 time_t ultimate_end_time = 0;
-time_t stun_end_time = 0;
 time_t game_start_time = 0;
 bool eclipse_relic_dropped = false;
 int previous_enemy_hp[game_state::max_enemies] = {0};
@@ -143,6 +140,8 @@ void clear_state() {
         shared_state->player_stamina[i] = 0;
         shared_state->player_damage[i] = 0;
         shared_state->player_stun_end_time[i] = 0;
+        shared_state->player_pending_action[i] = game_state::action_none;
+        shared_state->player_pending_target[i] = -1;
         for (int j = 0; j < game_state::inventory_slots; ++j) {
             shared_state->player_primary_inventory[i][j] = 0;
             shared_state->long_term_storage[i][j] = 0;
@@ -155,6 +154,7 @@ void clear_state() {
         shared_state->enemy_stamina[i] = 0;
         shared_state->enemy_damage[i] = 0;
         shared_state->stun_end_time[i] = 0;
+        shared_state->enemy_ready_since[i] = 0;
         previous_enemy_hp[i] = 0;
     }
     shared_state->eclipse_relic_holder = -1;
@@ -282,6 +282,51 @@ int roll_enemy_speed() {
     return 10 + (rand() % 21);
 }
 
+int weapon_slot_size(int weapon_id) {
+    switch (weapon_id) {
+        case game_state::splinter_stick_id: return game_state::splinter_stick_slots;
+        case game_state::venom_dagger_id: return game_state::venom_dagger_slots;
+        case game_state::obsidian_axe_id: return game_state::obsidian_axe_slots;
+        case game_state::frostbow_id: return game_state::frostbow_slots;
+        case game_state::thunderstaff_id: return game_state::thunderstaff_slots;
+        case game_state::iron_halberd_id: return game_state::iron_halberd_slots;
+        case game_state::solar_core_id: return game_state::solar_core_slots;
+        case game_state::lunar_blade_id: return game_state::lunar_blade_slots;
+        case game_state::eclipse_relic_id: return game_state::eclipse_relic_slots;
+        default: return 0;
+    }
+}
+
+int weapon_damage_value(int weapon_id) {
+    switch (weapon_id) {
+        case game_state::splinter_stick_id: return game_state::splinter_stick_damage;
+        case game_state::venom_dagger_id: return game_state::venom_dagger_damage;
+        case game_state::obsidian_axe_id: return game_state::obsidian_axe_damage;
+        case game_state::frostbow_id: return game_state::frostbow_damage;
+        case game_state::thunderstaff_id: return game_state::thunderstaff_damage;
+        case game_state::iron_halberd_id: return game_state::iron_halberd_damage;
+        case game_state::solar_core_id: return game_state::solar_core_damage;
+        case game_state::lunar_blade_id: return game_state::lunar_blade_damage;
+        case game_state::eclipse_relic_id: return game_state::eclipse_relic_damage;
+        default: return 0;
+    }
+}
+
+const char *weapon_name(int weapon_id) {
+    switch (weapon_id) {
+        case game_state::splinter_stick_id: return "splinter stick";
+        case game_state::venom_dagger_id: return "venom dagger";
+        case game_state::obsidian_axe_id: return "obsidian axe";
+        case game_state::frostbow_id: return "frostbow";
+        case game_state::thunderstaff_id: return "thunderstaff";
+        case game_state::iron_halberd_id: return "iron halberd";
+        case game_state::solar_core_id: return "solar core";
+        case game_state::lunar_blade_id: return "lunar blade";
+        case game_state::eclipse_relic_id: return "eclipse relic";
+        default: return "fists";
+    }
+}
+
 int random_drop_weapon_id() {
     int pool[] = {
         game_state::splinter_stick_id,
@@ -307,6 +352,195 @@ int player_damage_value() {
 
 int enemy_damage_value() {
     return game_state::enemy_attack_damage;
+}
+
+int find_first_living_enemy_locked() {
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
+        if (shared_state->enemy_hp[i] > 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int resolve_enemy_target_locked(int requested) {
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    if (requested >= 0 && requested < enemy_count && shared_state->enemy_hp[requested] > 0) {
+        return requested;
+    }
+    return find_first_living_enemy_locked();
+}
+
+bool inventory_contains_locked(int player_id, int weapon_id) {
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        if (shared_state->player_primary_inventory[player_id][i] == weapon_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int find_contiguous_free_in_array(const int *arr, int needed) {
+    int run = 0;
+    int start = -1;
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        if (arr[i] == 0) {
+            if (run == 0) {
+                start = i;
+            }
+            run++;
+            if (run >= needed) {
+                return start;
+            }
+        } else {
+            run = 0;
+            start = -1;
+        }
+    }
+    return -1;
+}
+
+int find_first_weapon_run(const int *arr, int *run_size_out) {
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        int w = arr[i];
+        if (w == 0) {
+            continue;
+        }
+        int size = weapon_slot_size(w);
+        if (size <= 0) {
+            size = 1;
+        }
+        *run_size_out = size;
+        return i;
+    }
+    return -1;
+}
+
+void place_weapon(int *arr, int start, int size, int weapon_id) {
+    for (int i = start; i < start + size; ++i) {
+        arr[i] = weapon_id;
+    }
+}
+
+void zero_weapon_run(int *arr, int start, int size) {
+    for (int i = start; i < start + size; ++i) {
+        arr[i] = 0;
+    }
+}
+
+int allocate_weapon_iterative_locked(int player_id, int weapon_id) {
+    int needed = weapon_slot_size(weapon_id);
+    if (needed <= 0) {
+        return -1;
+    }
+    int *primary = shared_state->player_primary_inventory[player_id];
+    int *storage = shared_state->long_term_storage[player_id];
+    int backup_primary[game_state::inventory_slots];
+    int backup_storage[game_state::inventory_slots];
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        backup_primary[i] = primary[i];
+        backup_storage[i] = storage[i];
+    }
+    int safety = game_state::inventory_slots + 2;
+    while (safety-- > 0) {
+        int start = find_contiguous_free_in_array(primary, needed);
+        if (start >= 0) {
+            place_weapon(primary, start, needed, weapon_id);
+            return start;
+        }
+        int evict_size = 0;
+        int evict_start = find_first_weapon_run(primary, &evict_size);
+        if (evict_start < 0) {
+            break;
+        }
+        int evict_weapon = primary[evict_start];
+        int storage_start = find_contiguous_free_in_array(storage, evict_size);
+        if (storage_start < 0) {
+            break;
+        }
+        place_weapon(storage, storage_start, evict_size, evict_weapon);
+        zero_weapon_run(primary, evict_start, evict_size);
+    }
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        primary[i] = backup_primary[i];
+        storage[i] = backup_storage[i];
+    }
+    return -1;
+}
+
+int find_best_weapon_locked(int player_id) {
+    int best_id = 0;
+    int best_dmg = 0;
+    int i = 0;
+    while (i < game_state::inventory_slots) {
+        int w = shared_state->player_primary_inventory[player_id][i];
+        if (w == 0) {
+            i++;
+            continue;
+        }
+        int size = weapon_slot_size(w);
+        if (size <= 0) {
+            size = 1;
+        }
+        int dmg = weapon_damage_value(w);
+        if (dmg > best_dmg) {
+            best_dmg = dmg;
+            best_id = w;
+        }
+        i += size;
+    }
+    return best_id;
+}
+
+int swap_in_from_storage_locked(int player_id) {
+    int *storage = shared_state->long_term_storage[player_id];
+    int chosen_weapon = 0;
+    int chosen_start = -1;
+    int chosen_size = 0;
+    int chosen_dmg = 0;
+    int i = 0;
+    while (i < game_state::inventory_slots) {
+        int w = storage[i];
+        if (w == 0) {
+            i++;
+            continue;
+        }
+        int size = weapon_slot_size(w);
+        if (size <= 0) {
+            size = 1;
+        }
+        int dmg = weapon_damage_value(w);
+        if (dmg > chosen_dmg) {
+            chosen_dmg = dmg;
+            chosen_weapon = w;
+            chosen_start = i;
+            chosen_size = size;
+        }
+        i += size;
+    }
+    if (chosen_weapon == 0) {
+        return 0;
+    }
+    zero_weapon_run(storage, chosen_start, chosen_size);
+    int placed = allocate_weapon_iterative_locked(player_id, chosen_weapon);
+    if (placed < 0) {
+        place_weapon(storage, chosen_start, chosen_size, chosen_weapon);
+        return -1;
+    }
+    return chosen_weapon;
 }
 
 void initialize_players() {
@@ -340,6 +574,7 @@ void initialize_enemies() {
             shared_state->enemy_speed[i] = roll_enemy_speed();
             shared_state->enemy_stamina[i] = 0;
             shared_state->enemy_damage[i] = common_damage;
+            shared_state->enemy_ready_since[i] = 0;
             shared_state->enemy_display_id[i] = i + 1;
             shared_state->enemy_dead_count[i] = 0;
         } else {
@@ -348,6 +583,7 @@ void initialize_enemies() {
             shared_state->enemy_speed[i] = 0;
             shared_state->enemy_stamina[i] = 0;
             shared_state->enemy_damage[i] = 0;
+            shared_state->enemy_ready_since[i] = 0;
             shared_state->enemy_display_id[i] = 0;
             shared_state->enemy_dead_count[i] = 0;
         }
@@ -393,9 +629,7 @@ void apply_signal_requests_locked(time_t now) {
     if (stun_requested) {
         stun_requested = 0;
         stun_triggered = 1;
-        asp_frozen = 1;
-        hip_frozen = 1;
-        stun_end_time = now + 3;
+        (void)now;
     }
 }
 
@@ -407,12 +641,7 @@ void process_freeze_endings_locked(time_t now) {
         ultimate_end_time = 0;
         ultimate_ended = 1;
     }
-    if (stun_end_time > 0 && now >= stun_end_time) {
-        stun_end_time = 0;
-        stun_ended = 1;
-    }
-    bool asp_should_stay_frozen = (ultimate_end_time > 0) || (stun_end_time > 0);
-    bool hip_should_stay_frozen = (stun_end_time > 0);
+    bool asp_should_stay_frozen = (ultimate_end_time > 0);
     if (asp_frozen && !asp_should_stay_frozen) {
         pid_t asp_pid = static_cast<pid_t>(cached_asp_pid);
         if (asp_pid > 0) {
@@ -420,25 +649,13 @@ void process_freeze_endings_locked(time_t now) {
         }
         asp_frozen = 0;
     }
-    if (hip_frozen && !hip_should_stay_frozen) {
-        pid_t hip_pid = static_cast<pid_t>(cached_hip_pid);
-        if (hip_pid > 0) {
-            kill(hip_pid, SIGCONT);
-        }
-        hip_frozen = 0;
-    }
+    (void)now;
 }
 
 void schedule_next_alarm_locked(time_t now) {
     int next_alarm_seconds = 0;
     if (ultimate_end_time > now) {
         next_alarm_seconds = static_cast<int>(ultimate_end_time - now);
-    }
-    if (stun_end_time > now) {
-        int stun_seconds = static_cast<int>(stun_end_time - now);
-        if (next_alarm_seconds == 0 || stun_seconds < next_alarm_seconds) {
-            next_alarm_seconds = stun_seconds;
-        }
     }
     if (next_alarm_seconds <= 0) {
         alarm(0);
@@ -492,6 +709,7 @@ void track_enemy_deaths_locked() {
             shared_state->enemy_speed[i] = roll_enemy_speed();
             shared_state->enemy_damage[i] = enemy_damage_value();
             shared_state->stun_end_time[i] = 0;
+            shared_state->enemy_ready_since[i] = 0;
             snprintf(
                 shared_state->action_log, sizeof(shared_state->action_log),
                 "enemy %d died, enemy %d entered slot %d, new enemy appeared",
@@ -583,6 +801,184 @@ void check_outcome_locked() {
     }
 }
 
+void reset_enemy_turn_timeout_locked() {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (shared_state->enemy_hp[i] <= 0) {
+            shared_state->enemy_ready_since[i] = 0;
+            continue;
+        }
+        if (shared_state->enemy_stamina[i] < game_state::enemy_max_stamina) {
+            shared_state->enemy_ready_since[i] = 0;
+        }
+    }
+}
+
+void apply_enemy_turn_timeouts_locked(time_t now) {
+    int enemy_count = shared_state->active_enemy_count;
+    if (enemy_count < 0) {
+        enemy_count = 0;
+    }
+    if (enemy_count > game_state::max_enemies) {
+        enemy_count = game_state::max_enemies;
+    }
+    for (int i = 0; i < enemy_count; ++i) {
+        if (shared_state->enemy_hp[i] <= 0) {
+            shared_state->enemy_ready_since[i] = 0;
+            continue;
+        }
+        if (shared_state->stun_end_time[i] > now) {
+            shared_state->enemy_ready_since[i] = 0;
+            continue;
+        }
+        if (shared_state->enemy_stamina[i] >= game_state::enemy_max_stamina) {
+            if (shared_state->enemy_ready_since[i] == 0) {
+                shared_state->enemy_ready_since[i] = now;
+            } else if (now - shared_state->enemy_ready_since[i] >= 3) {
+                shared_state->enemy_stamina[i] = game_state::enemy_max_stamina / 2;
+                shared_state->enemy_ready_since[i] = 0;
+                snprintf(shared_state->action_log, sizeof(shared_state->action_log), "enemy %d timeout: forced skip", i + 1);
+                snprintf(shared_state->last_event, sizeof(shared_state->last_event), "enemy_%d_timeout", i + 1);
+            }
+        } else {
+            shared_state->enemy_ready_since[i] = 0;
+        }
+    }
+}
+
+void execute_player_action_locked(int player_id, int action, int target, time_t now) {
+    if (player_id < 0 || player_id >= game_state::max_players) {
+        return;
+    }
+    if (player_id >= shared_state->active_player_count) {
+        return;
+    }
+    if (shared_state->player_hp[player_id] <= 0) {
+        return;
+    }
+    if (shared_state->player_stun_end_time[player_id] > now) {
+        return;
+    }
+    bool needs_full = action != game_state::action_none;
+    if (needs_full && shared_state->player_stamina[player_id] < game_state::player_max_stamina) {
+        return;
+    }
+    int enemy_id = -1;
+    if (action == game_state::action_strike || action == game_state::action_exhaust ||
+        action == game_state::action_stun || action == game_state::action_use_weapon) {
+        enemy_id = resolve_enemy_target_locked(target);
+        if (enemy_id < 0) {
+            return;
+        }
+    }
+    if (action == game_state::action_strike) {
+        int dmg = shared_state->player_damage[player_id];
+        int next_hp = shared_state->enemy_hp[enemy_id] - dmg;
+        if (next_hp < 0) {
+            next_hp = 0;
+        }
+        shared_state->enemy_hp[enemy_id] = next_hp;
+        shared_state->player_stamina[player_id] = 0;
+    } else if (action == game_state::action_exhaust) {
+        int dmg = shared_state->player_damage[player_id];
+        int next_stamina = shared_state->enemy_stamina[enemy_id] - dmg;
+        if (next_stamina < 0) {
+            next_stamina = 0;
+        }
+        shared_state->enemy_stamina[enemy_id] = next_stamina;
+        shared_state->player_stamina[player_id] = 0;
+    } else if (action == game_state::action_heal) {
+        int max_hp = shared_state->player_max_hp[player_id];
+        int heal = max_hp / 10;
+        if (heal < 1) {
+            heal = 1;
+        }
+        int hp = shared_state->player_hp[player_id] + heal;
+        if (hp > max_hp) {
+            hp = max_hp;
+        }
+        shared_state->player_hp[player_id] = hp;
+        shared_state->player_stamina[player_id] = 0;
+    } else if (action == game_state::action_skip) {
+        shared_state->player_stamina[player_id] = game_state::player_max_stamina / 2;
+    } else if (action == game_state::action_pickup) {
+        int dropped = shared_state->current_dropped_weapon;
+        if (dropped != 0) {
+            int placed = allocate_weapon_iterative_locked(player_id, dropped);
+            if (placed >= 0) {
+                shared_state->current_dropped_weapon = 0;
+                if (dropped == game_state::solar_core_id) {
+                    shared_state->solar_core_holder = player_id;
+                } else if (dropped == game_state::lunar_blade_id) {
+                    shared_state->lunar_blade_holder = player_id;
+                } else if (dropped == game_state::eclipse_relic_id) {
+                    shared_state->eclipse_relic_holder = player_id;
+                    shared_state->eclipse_relic_present = 1;
+                }
+                shared_state->player_stamina[player_id] = 0;
+            }
+        }
+    } else if (action == game_state::action_ultimate) {
+        bool has_solar = inventory_contains_locked(player_id, game_state::solar_core_id);
+        bool has_lunar = inventory_contains_locked(player_id, game_state::lunar_blade_id);
+        if (has_solar && has_lunar) {
+            shared_state->player_stamina[player_id] = 0;
+            pid_t asp_pid = static_cast<pid_t>(cached_asp_pid);
+            if (asp_pid > 0) {
+                kill(asp_pid, SIGSTOP);
+            }
+            asp_frozen = 1;
+            ultimate_end_time = now + 10;
+            ultimate_triggered = 1;
+        }
+    } else if (action == game_state::action_stun) {
+        int dmg = shared_state->player_damage[player_id];
+        int next_hp = shared_state->enemy_hp[enemy_id] - dmg;
+        if (next_hp < 0) {
+            next_hp = 0;
+        }
+        shared_state->enemy_hp[enemy_id] = next_hp;
+        shared_state->stun_end_time[enemy_id] = now + 3;
+        shared_state->player_stamina[player_id] = 0;
+        stun_triggered = 1;
+    } else if (action == game_state::action_use_weapon) {
+        int weapon_id = find_best_weapon_locked(player_id);
+        if (weapon_id != 0) {
+            int dmg = weapon_damage_value(weapon_id);
+            int next_hp = shared_state->enemy_hp[enemy_id] - dmg;
+            if (next_hp < 0) {
+                next_hp = 0;
+            }
+            shared_state->enemy_hp[enemy_id] = next_hp;
+            shared_state->player_stamina[player_id] = 0;
+        }
+    } else if (action == game_state::action_swap_in) {
+        int swapped = swap_in_from_storage_locked(player_id);
+        if (swapped != -1) {
+            shared_state->player_stamina[player_id] = 0;
+        }
+    }
+}
+
+void process_player_actions_locked(time_t now) {
+    int player_count = shared_state->active_player_count;
+    if (player_count < 0) {
+        player_count = 0;
+    }
+    if (player_count > game_state::max_players) {
+        player_count = game_state::max_players;
+    }
+    for (int i = 0; i < player_count; ++i) {
+        int action = shared_state->player_pending_action[i];
+        int target = shared_state->player_pending_target[i];
+        if (action == game_state::action_none) {
+            continue;
+        }
+        shared_state->player_pending_action[i] = game_state::action_none;
+        shared_state->player_pending_target[i] = -1;
+        execute_player_action_locked(i, action, target, now);
+    }
+}
+
 bool tick_stamina_progression() {
     if (!lock_state()) {
         return false;
@@ -607,19 +1003,17 @@ bool tick_stamina_progression() {
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun pulse: arena frozen 3s");
         snprintf(shared_state->last_event, sizeof(shared_state->last_event), "stun_start");
     }
-    if (stun_ended) {
-        stun_ended = 0;
-        snprintf(shared_state->action_log, sizeof(shared_state->action_log), "stun ended: combatants released");
-        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "stun_end");
-    }
     if (deadlock_broken) {
         deadlock_broken = 0;
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "deadlock monitor forced an artifact drop");
         snprintf(shared_state->last_event, sizeof(shared_state->last_event), "deadlock_break");
     }
+    process_player_actions_locked(now);
     update_player_stamina();
     update_enemy_stamina();
+    apply_enemy_turn_timeouts_locked(now);
     track_enemy_deaths_locked();
+    reset_enemy_turn_timeout_locked();
     update_active_player_locked();
     maybe_spawn_eclipse_relic_locked(now);
     check_outcome_locked();
@@ -853,11 +1247,11 @@ void handle_exit_signal(int) {
     arbiter_running = 0;
 }
 
-bool register_signal_handler(int signal_number, void (*handler)(int), const char *signal_name) {
+bool register_signal_handler(int signal_number, void (*handler)(int), const char *signal_name, int flags) {
     struct sigaction action;
     memset(&action, 0, sizeof(action));
     action.sa_handler = handler;
-    action.sa_flags = SA_RESTART;
+    action.sa_flags = flags;
     sigemptyset(&action.sa_mask);
     if (sigaction(signal_number, &action, nullptr) != 0) {
         fprintf(stderr, "failed to register %s handler\n", signal_name);
@@ -867,19 +1261,19 @@ bool register_signal_handler(int signal_number, void (*handler)(int), const char
 }
 
 bool register_exit_handlers() {
-    if (!register_signal_handler(SIGINT, handle_exit_signal, "sigint")) {
+    if (!register_signal_handler(SIGINT, handle_exit_signal, "sigint", SA_RESTART)) {
         return false;
     }
-    if (!register_signal_handler(SIGTERM, handle_quit_signal, "sigterm")) {
+    if (!register_signal_handler(SIGTERM, handle_quit_signal, "sigterm", SA_RESTART)) {
         return false;
     }
-    if (!register_signal_handler(SIGALRM, handle_alarm_signal, "sigalrm")) {
+    if (!register_signal_handler(SIGALRM, handle_alarm_signal, "sigalrm", 0)) {
         return false;
     }
-    if (!register_signal_handler(SIGUSR1, handle_ultimate_signal, "sigusr1")) {
+    if (!register_signal_handler(SIGUSR1, handle_ultimate_signal, "sigusr1", SA_RESTART)) {
         return false;
     }
-    if (!register_signal_handler(SIGUSR2, handle_stun_signal, "sigusr2")) {
+    if (!register_signal_handler(SIGUSR2, handle_stun_signal, "sigusr2", SA_RESTART)) {
         return false;
     }
     return true;

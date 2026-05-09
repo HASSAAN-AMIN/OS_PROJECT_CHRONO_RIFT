@@ -78,6 +78,8 @@ struct game_state {
     int player_stamina[max_players];
     int player_damage[max_players];
     time_t player_stun_end_time[max_players];
+    int player_pending_action[max_players];
+    int player_pending_target[max_players];
 
     int enemy_hp[max_enemies];
     int enemy_max_hp[max_enemies];
@@ -85,6 +87,7 @@ struct game_state {
     int enemy_stamina[max_enemies];
     int enemy_damage[max_enemies];
     time_t stun_end_time[max_enemies];
+    time_t enemy_ready_since[max_enemies];
 
     int player_primary_inventory[max_players][inventory_slots];
     int long_term_storage[max_players][storage_slots];
