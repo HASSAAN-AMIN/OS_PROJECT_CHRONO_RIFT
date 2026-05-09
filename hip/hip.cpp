@@ -1858,42 +1858,43 @@ bool register_signals() {
 }
 
 void init_color_pairs() {
-    init_pair(pair_default, COLOR_WHITE, COLOR_BLACK);
-    init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_border_active, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_border_dead, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_hp_high, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_hp_med, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_hp_low, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_hp_critical, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_stamina, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_stamina_full, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_log, COLOR_WHITE, COLOR_BLACK);
-    init_pair(pair_status_ok, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_status_warn, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_artifact_solar, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_artifact_lunar, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_artifact_ground, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_command_bar, COLOR_BLACK, COLOR_WHITE);
+    const short theme_bg = COLOR_WHITE;
+    init_pair(pair_default, COLOR_BLUE, theme_bg);
+    init_pair(pair_border_normal, COLOR_CYAN, theme_bg);
+    init_pair(pair_border_active, COLOR_GREEN, theme_bg);
+    init_pair(pair_border_dead, COLOR_RED, theme_bg);
+    init_pair(pair_hp_high, COLOR_GREEN, theme_bg);
+    init_pair(pair_hp_med, COLOR_CYAN, theme_bg);
+    init_pair(pair_hp_low, COLOR_MAGENTA, theme_bg);
+    init_pair(pair_hp_critical, COLOR_RED, theme_bg);
+    init_pair(pair_stamina, COLOR_BLUE, theme_bg);
+    init_pair(pair_stamina_full, COLOR_GREEN, theme_bg);
+    init_pair(pair_log, COLOR_BLUE, theme_bg);
+    init_pair(pair_status_ok, COLOR_GREEN, theme_bg);
+    init_pair(pair_status_warn, COLOR_RED, theme_bg);
+    init_pair(pair_artifact_solar, COLOR_YELLOW, theme_bg);
+    init_pair(pair_artifact_lunar, COLOR_CYAN, theme_bg);
+    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, theme_bg);
+    init_pair(pair_artifact_ground, COLOR_BLUE, theme_bg);
+    init_pair(pair_command_bar, COLOR_BLUE, COLOR_CYAN);
     init_pair(pair_inv_empty, COLOR_BLACK, COLOR_BLACK);
-    init_pair(pair_inv_splinter, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_inv_venom, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_inv_obsidian, COLOR_BLACK, COLOR_BLACK);
-    init_pair(pair_inv_frost, COLOR_BLUE, COLOR_BLACK);
-    init_pair(pair_inv_thunder, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_inv_iron, COLOR_WHITE, COLOR_BLACK);
-    init_pair(pair_inv_solar, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_inv_lunar, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_inv_eclipse, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_panel_title, COLOR_MAGENTA, COLOR_BLACK);
-    init_pair(pair_arena_title, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_banner, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(pair_kill_counter, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_overlay_win, COLOR_GREEN, COLOR_BLACK);
-    init_pair(pair_overlay_lose, COLOR_RED, COLOR_BLACK);
-    init_pair(pair_overlay_quit, COLOR_CYAN, COLOR_BLACK);
-    init_pair(pair_help, COLOR_CYAN, COLOR_BLACK);
+    init_pair(pair_inv_splinter, COLOR_GREEN, theme_bg);
+    init_pair(pair_inv_venom, COLOR_MAGENTA, theme_bg);
+    init_pair(pair_inv_obsidian, COLOR_BLACK, theme_bg);
+    init_pair(pair_inv_frost, COLOR_BLUE, theme_bg);
+    init_pair(pair_inv_thunder, COLOR_YELLOW, theme_bg);
+    init_pair(pair_inv_iron, COLOR_BLUE, theme_bg);
+    init_pair(pair_inv_solar, COLOR_YELLOW, theme_bg);
+    init_pair(pair_inv_lunar, COLOR_CYAN, theme_bg);
+    init_pair(pair_inv_eclipse, COLOR_MAGENTA, theme_bg);
+    init_pair(pair_panel_title, COLOR_GREEN, theme_bg);
+    init_pair(pair_arena_title, COLOR_CYAN, theme_bg);
+    init_pair(pair_banner, COLOR_BLUE, theme_bg);
+    init_pair(pair_kill_counter, COLOR_GREEN, theme_bg);
+    init_pair(pair_overlay_win, COLOR_GREEN, theme_bg);
+    init_pair(pair_overlay_lose, COLOR_RED, theme_bg);
+    init_pair(pair_overlay_quit, COLOR_BLUE, theme_bg);
+    init_pair(pair_help, COLOR_BLUE, theme_bg);
 }
 
 bool init_tui() {
