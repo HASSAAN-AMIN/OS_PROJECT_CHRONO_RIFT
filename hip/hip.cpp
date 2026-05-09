@@ -36,6 +36,14 @@ const int player_exhaust_damage = 10;
 const int player_skip_stamina = 50;
 const int player_heal_amount = 178;
 const int player_max_hp = 1780;
+const int splinter_stick_damage = 18;
+const int venom_dagger_damage = 32;
+const int iron_halberd_damage = 48;
+const int solar_core_damage = 95;
+const int lunar_blade_damage = 85;
+const int action_none = 0;
+const int action_send_ultimate_signal = 1;
+const int action_send_stun_signal = 2;
 const int solar_core_inventory_id = game_state::solar_core_id;
 const int lunar_blade_inventory_id = game_state::lunar_blade_id;
 const int player_stun_damage = 15;
@@ -482,6 +490,37 @@ void assign_drop_on_enemy_death_locked(int enemy_id) {
     shared_state->current_dropped_weapon = random_drop_weapon_id();
 }
 
+int weapon_damage_from_id(int weapon_id) {
+    if (weapon_id == game_state::splinter_stick_id) {
+        return splinter_stick_damage;
+    }
+    if (weapon_id == game_state::venom_dagger_id) {
+        return venom_dagger_damage;
+    }
+    if (weapon_id == game_state::iron_halberd_id) {
+        return iron_halberd_damage;
+    }
+    if (weapon_id == game_state::solar_core_id) {
+        return solar_core_damage;
+    }
+    if (weapon_id == game_state::lunar_blade_id) {
+        return lunar_blade_damage;
+    }
+    return player_base_damage;
+}
+
+int highest_equipped_weapon_damage_locked(int player_id) {
+    int highest_damage = player_base_damage;
+    for (int i = 0; i < game_state::inventory_slots; ++i) {
+        int weapon_id = shared_state->player_primary_inventory[player_id][i];
+        int weapon_damage = weapon_damage_from_id(weapon_id);
+        if (weapon_damage > highest_damage) {
+            highest_damage = weapon_damage;
+        }
+    }
+    return highest_damage;
+}
+
 void apply_strike_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
@@ -502,9 +541,18 @@ void apply_weapon_attack_locked(int player_id) {
     if (target_enemy < 0) {
         return;
     }
-    int next_hp = shared_state->enemy_hp[target_enemy] - player_base_damage;
+    int attack_damage = highest_equipped_weapon_damage_locked(player_id);
+    int next_hp = shared_state->enemy_hp[target_enemy] - attack_damage;
     shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
     assign_drop_on_enemy_death_locked(target_enemy);
+    snprintf(
+        shared_state->action_log,
+        sizeof(shared_state->action_log),
+        "player %d weapon hit enemy %d for %d",
+        player_id + 1,
+        target_enemy + 1,
+        attack_damage
+    );
     shared_state->player_stamina[player_id] = 0;
 }
 
@@ -549,7 +597,7 @@ bool player_has_artifact_locked(int player_id, int artifact_id) {
     return false;
 }
 
-bool apply_ultimate_locked(int player_id) {
+int apply_ultimate_locked(int player_id) {
     bool has_solar = player_has_artifact_locked(player_id, solar_core_inventory_id);
     bool has_lunar = player_has_artifact_locked(player_id, lunar_blade_inventory_id);
     if (!has_solar || !has_lunar) {
@@ -559,48 +607,30 @@ bool apply_ultimate_locked(int player_id) {
             "player %d ultimate failed: missing artifacts",
             player_id + 1
         );
-        return true;
+        return action_none;
     }
-    pid_t asp_pid = shared_state->asp_pid;
-    pid_t arbiter_pid = shared_state->arbiter_pid;
-    if (asp_pid <= 0 || arbiter_pid <= 0) {
+    if (shared_state->asp_pid <= 0 || shared_state->arbiter_pid <= 0) {
         snprintf(
             shared_state->action_log,
             sizeof(shared_state->action_log),
             "player %d ultimate failed: process pids missing",
             player_id + 1
         );
-        return true;
+        return action_none;
     }
     shared_state->player_stamina[player_id] = 0;
-    if (!unlock_memory()) {
-        return true;
-    }
-    kill(asp_pid, SIGSTOP);
-    kill(arbiter_pid, SIGUSR1);
-    if (!lock_memory()) {
-        return false;
-    }
-    return true;
+    return action_send_ultimate_signal;
 }
 
-void apply_stun_attack_locked(int player_id) {
+int apply_stun_attack_locked(int player_id) {
     int enemy_indices[game_state::max_enemies];
     int enemy_count = collect_living_enemies_locked(enemy_indices, game_state::max_enemies);
     int target_enemy = pick_random_enemy_locked(enemy_indices, enemy_count);
     if (target_enemy < 0) {
-        return;
+        return action_none;
     }
     int next_hp = shared_state->enemy_hp[target_enemy] - player_stun_damage;
     shared_state->enemy_hp[target_enemy] = clamp_value(next_hp, 0, 99999);
-    pid_t asp_pid = shared_state->asp_pid;
-    pid_t arbiter_pid = shared_state->arbiter_pid;
-    if (asp_pid > 0) {
-        kill(asp_pid, SIGSTOP);
-    }
-    if (arbiter_pid > 0) {
-        kill(arbiter_pid, SIGUSR2);
-    }
     shared_state->player_stamina[player_id] = 0;
     snprintf(
         shared_state->action_log,
@@ -608,12 +638,16 @@ void apply_stun_attack_locked(int player_id) {
         "player %d used stun: all enemies frozen for 3s",
         player_id + 1
     );
+    return action_send_stun_signal;
 }
 
 void handle_player_action(int key) {
     if (!lock_memory()) {
         return;
     }
+    int action_code = action_none;
+    pid_t asp_pid = 0;
+    pid_t arbiter_pid = 0;
     int active_player = find_turn_player_locked();
     if (active_player < 0) {
         unlock_memory();
@@ -630,13 +664,33 @@ void handle_player_action(int key) {
     } else if (key == '5') {
         apply_pickup_drop_locked(active_player);
     } else if (key == '6') {
-        if (!apply_ultimate_locked(active_player)) {
-            return;
-        }
+        action_code = apply_ultimate_locked(active_player);
     } else if (key == '7') {
-        apply_stun_attack_locked(active_player);
+        action_code = apply_stun_attack_locked(active_player);
     }
-    unlock_memory();
+    if (action_code != action_none) {
+        asp_pid = shared_state->asp_pid;
+        arbiter_pid = shared_state->arbiter_pid;
+    }
+    bool unlocked = unlock_memory();
+    if (!unlocked) {
+        return;
+    }
+    if (action_code == action_send_ultimate_signal) {
+        if (asp_pid > 0) {
+            kill(asp_pid, SIGSTOP);
+        }
+        if (arbiter_pid > 0) {
+            kill(arbiter_pid, SIGUSR1);
+        }
+    } else if (action_code == action_send_stun_signal) {
+        if (asp_pid > 0) {
+            kill(asp_pid, SIGSTOP);
+        }
+        if (arbiter_pid > 0) {
+            kill(arbiter_pid, SIGUSR2);
+        }
+    }
 }
 
 int find_turn_player_from_snapshot(const hip_snapshot *snapshot) {
@@ -1074,7 +1128,6 @@ void *render_loop(void *) {
         render_all(&snapshot, frame_id++);
         usleep(frame_sleep_us);
     }
-    shutdown_ncurses_ui();
     return nullptr;
 }
 
@@ -1092,7 +1145,6 @@ void *player_input_loop(void *) {
         pthread_mutex_unlock(&ncurses_lock);
         if (key == 'q' || key == 'Q') {
             running = 0;
-            shutdown_ncurses_ui();
             break;
         }
         if (key == '1' || key == '2' || key == '3' || key == '4' || key == '5' || key == '6' || key == '7') {
@@ -1154,7 +1206,6 @@ void join_input_thread() {
 }
 
 void cleanup() {
-    shutdown_ncurses_ui();
     unmap_shared_memory();
     close_shared_memory_fd();
 }
@@ -1182,11 +1233,13 @@ int main() {
     if (!start_input_thread()) {
         running = 0;
         join_render_thread();
+        shutdown_ncurses_ui();
         cleanup();
         return 1;
     }
     join_render_thread();
     join_input_thread();
+    shutdown_ncurses_ui();
     cleanup();
     printf("hip exited cleanly\n");
     return 0;
