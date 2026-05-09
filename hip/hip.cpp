@@ -59,6 +59,9 @@ const int pair_overlay_win = 33;
 const int pair_overlay_lose = 34;
 const int pair_overlay_quit = 35;
 const int pair_help = 36;
+const int pair_canvas = 37;
+const int pair_panel_fill = 38;
+const int pair_top_hud = 39;
 
 int shared_memory_fd = -1;
 game_state *shared_state = nullptr;
@@ -992,6 +995,19 @@ void draw_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
     }
 }
 
+void fill_rect(int y, int x, int h, int w, int pair) {
+    if (h <= 0 || w <= 0) {
+        return;
+    }
+    attron(COLOR_PAIR(pair));
+    for (int yy = 0; yy < h; ++yy) {
+        for (int xx = 0; xx < w; ++xx) {
+            mvaddch(y + yy, x + xx, ' ');
+        }
+    }
+    attroff(COLOR_PAIR(pair));
+}
+
 void draw_double_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
     if (h < 2 || w < 2) {
         return;
@@ -1012,6 +1028,9 @@ void draw_double_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
 }
 
 void draw_titled_box(int y, int x, int h, int w, const char *title, int pair, int extra_attr) {
+    if (h > 2 && w > 2) {
+        fill_rect(y + 1, x + 1, h - 2, w - 2, pair_panel_fill);
+    }
     draw_box_at(y, x, h, w, pair, extra_attr);
     if (title == nullptr || w < 8) {
         return;
@@ -1303,31 +1322,23 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
 }
 
 void render_banner(int y, int x, int w) {
-    if (w < 60) {
-        attron(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
-        const char *short_title = "  CHRONO RIFT  ";
-        int len = (int)strlen(short_title);
-        int sx = x + (w - len) / 2;
-        mvprintw(y, sx, "%s", short_title);
-        attroff(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
-        return;
+    const char *title = " CHRONO RIFT ";
+    const char *subtitle = "emerald tide arena  |  calm palette mode";
+    int tlen = (int)strlen(title);
+    int slen = (int)strlen(subtitle);
+    int tx = x + (w - tlen) / 2;
+    int sx = x + (w - slen) / 2;
+    if (tx < x + 1) {
+        tx = x + 1;
     }
-    const char *line1 = "  ____ _   _ ____   ___  _   _  ___    ____  ___ _____ _____ ";
-    const char *line2 = " / ___| | | |  _ \\ / _ \\| \\ | |/ _ \\  |  _ \\|_ _|  ___|_   _|";
-    const char *line3 = "| |   | |_| | |_) | | | |  \\| | | | | | |_) || || |_    | |  ";
-    const char *line4 = "| |___|  _  |  _ <| |_| | |\\  | |_| | |  _ < | ||  _|   | |  ";
-    const char *line5 = " \\____|_| |_|_| \\_\\\\___/|_| \\_|\\___/  |_| \\_\\___|_|     |_|  ";
-    const char *lines[] = {line1, line2, line3, line4, line5};
-    int line_count = 5;
-    int line_w = (int)strlen(line1);
-    int sx = x + (w - line_w) / 2;
     if (sx < x + 1) {
         sx = x + 1;
     }
+    attron(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
+    mvprintw(y, tx, "%s", title);
+    attroff(COLOR_PAIR(pair_banner) | A_BOLD | A_REVERSE);
     attron(COLOR_PAIR(pair_banner) | A_BOLD);
-    for (int i = 0; i < line_count; ++i) {
-        mvprintw(y + i, sx, "%.*s", w - 2, lines[i]);
-    }
+    mvprintw(y + 1, sx, "%.*s", w - 2, subtitle);
     attroff(COLOR_PAIR(pair_banner) | A_BOLD);
 }
 
@@ -1536,14 +1547,14 @@ void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     if (inner_h < 8 || inner_w < 10) {
         return;
     }
-    int banner_h = (inner_w >= 60 && inner_h >= 18) ? 6 : 2;
-    if (banner_h > inner_h - 8) {
-        banner_h = 2;
+    int banner_h = 3;
+    if (banner_h > inner_h - 7) {
+        banner_h = 1;
     }
     render_banner(inner_y, inner_x, inner_w);
     int below_banner_y = inner_y + banner_h;
     int remaining_h = inner_h - banner_h;
-    int log_h = remaining_h / 2;
+    int log_h = (remaining_h * 55) / 100;
     if (log_h < 4) {
         log_h = 4;
     }
@@ -1570,19 +1581,46 @@ void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     }
 }
 
-void render_command_bar(int y, int term_w) {
+void render_top_hud(int y, int term_w, const world_snapshot &snap) {
+    draw_double_box_at(y, 0, 3, term_w, pair_top_hud, A_BOLD);
+    attron(COLOR_PAIR(pair_top_hud) | A_BOLD | A_REVERSE);
+    mvprintw(y + 1, 2, " chrono rift ");
+    attroff(COLOR_PAIR(pair_top_hud) | A_BOLD | A_REVERSE);
+    attron(COLOR_PAIR(pair_top_hud) | A_BOLD);
+    mvprintw(y + 1, 18, "party %d  enemies %d  kills %d/%d  roll %d",
+             snap.active_player_count, snap.active_enemy_count, snap.enemy_kills,
+             game_state::kills_required_to_win, snap.roll_number);
+    if (snap.active_player_index >= 0) {
+        mvprintw(y + 1, term_w - 20, "turn P%d", snap.active_player_index + 1);
+    }
+    attroff(COLOR_PAIR(pair_top_hud) | A_BOLD);
+}
+
+void render_command_bar(int y, int term_w, int h) {
     attron(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
-    for (int i = 0; i < term_w; ++i) {
-        mvaddch(y, i, ' ');
+    for (int row = 0; row < h; ++row) {
+        for (int i = 0; i < term_w; ++i) {
+            mvaddch(y + row, i, ' ');
+        }
     }
-    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [7]stun [8]use [9]swap [?]help [q]quit ";
-    int legend_len = (int)strlen(legend);
-    int start = (term_w - legend_len) / 2;
-    if (start < 0) {
-        start = 0;
-        legend_len = term_w;
+    const char *line1 = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [8]weapon [9]swap ";
+    const char *line2 = " [6]ultimate [7]stun [?]help [q]quit ";
+    int l1 = (int)strlen(line1);
+    int l2 = (int)strlen(line2);
+    int s1 = (term_w - l1) / 2;
+    int s2 = (term_w - l2) / 2;
+    if (s1 < 0) {
+        s1 = 0;
+        l1 = term_w;
     }
-    mvprintw(y, start, "%.*s", legend_len, legend);
+    if (s2 < 0) {
+        s2 = 0;
+        l2 = term_w;
+    }
+    mvprintw(y, s1, "%.*s", l1, line1);
+    if (h > 1) {
+        mvprintw(y + 1, s2, "%.*s", l2, line2);
+    }
     attroff(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
 }
 
@@ -1684,10 +1722,11 @@ void render_frame(const world_snapshot &snap) {
         pthread_mutex_unlock(&ncurses_lock);
         return;
     }
-    int command_h = 1;
-    int main_h = term_h - command_h;
-    int left_w = term_w * 28 / 100;
-    int right_w = term_w * 38 / 100;
+    int hud_h = 3;
+    int command_h = 2;
+    int main_h = term_h - command_h - hud_h;
+    int left_w = term_w * 27 / 100;
+    int right_w = term_w * 33 / 100;
     int center_w = term_w - left_w - right_w;
     if (left_w < 24) {
         left_w = 24;
@@ -1700,10 +1739,11 @@ void render_frame(const world_snapshot &snap) {
         right_w = (term_w - 24) - left_w;
     }
     center_w = term_w - left_w - right_w;
-    render_player_panel(0, 0, main_h, left_w, snap);
-    render_arena_panel(0, left_w, main_h, center_w, snap);
-    render_enemy_panel(0, left_w + center_w, main_h, right_w, snap);
-    render_command_bar(term_h - 1, term_w);
+    render_top_hud(0, term_w, snap);
+    render_player_panel(hud_h, 0, main_h, left_w, snap);
+    render_arena_panel(hud_h, left_w, main_h, center_w, snap);
+    render_enemy_panel(hud_h, left_w + center_w, main_h, right_w, snap);
+    render_command_bar(term_h - command_h, term_w, command_h);
 
     if (snap.outcome == game_state::outcome_win) {
         char line1[64];
@@ -1858,43 +1898,76 @@ bool register_signals() {
 }
 
 void init_color_pairs() {
-    const short theme_bg = COLOR_WHITE;
-    init_pair(pair_default, COLOR_BLUE, theme_bg);
-    init_pair(pair_border_normal, COLOR_CYAN, theme_bg);
-    init_pair(pair_border_active, COLOR_GREEN, theme_bg);
-    init_pair(pair_border_dead, COLOR_RED, theme_bg);
-    init_pair(pair_hp_high, COLOR_GREEN, theme_bg);
-    init_pair(pair_hp_med, COLOR_CYAN, theme_bg);
-    init_pair(pair_hp_low, COLOR_MAGENTA, theme_bg);
-    init_pair(pair_hp_critical, COLOR_RED, theme_bg);
-    init_pair(pair_stamina, COLOR_BLUE, theme_bg);
-    init_pair(pair_stamina_full, COLOR_GREEN, theme_bg);
-    init_pair(pair_log, COLOR_BLUE, theme_bg);
-    init_pair(pair_status_ok, COLOR_GREEN, theme_bg);
-    init_pair(pair_status_warn, COLOR_RED, theme_bg);
-    init_pair(pair_artifact_solar, COLOR_YELLOW, theme_bg);
-    init_pair(pair_artifact_lunar, COLOR_CYAN, theme_bg);
-    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, theme_bg);
-    init_pair(pair_artifact_ground, COLOR_BLUE, theme_bg);
-    init_pair(pair_command_bar, COLOR_BLUE, COLOR_CYAN);
+    short theme_bg = COLOR_BLACK;
+    short panel_bg = COLOR_BLACK;
+    short hud_bg = COLOR_BLACK;
+    short text_fg = COLOR_CYAN;
+    short accent_fg = COLOR_GREEN;
+    if (can_change_color() && COLORS >= 64) {
+        const short c_bg = 40;
+        const short c_panel = 41;
+        const short c_hud = 42;
+        const short c_text = 43;
+        const short c_accent = 44;
+        const short c_water = 45;
+        init_color(c_bg, 20, 130, 90);
+        init_color(c_panel, 30, 210, 150);
+        init_color(c_hud, 40, 260, 180);
+        init_color(c_text, 870, 980, 940);
+        init_color(c_accent, 600, 980, 760);
+        init_color(c_water, 560, 920, 980);
+        theme_bg = c_bg;
+        panel_bg = c_panel;
+        hud_bg = c_hud;
+        text_fg = c_text;
+        accent_fg = c_accent;
+        init_pair(pair_canvas, text_fg, theme_bg);
+        init_pair(pair_panel_fill, text_fg, panel_bg);
+        init_pair(pair_top_hud, text_fg, hud_bg);
+        init_pair(pair_default, text_fg, theme_bg);
+        init_pair(pair_border_normal, c_water, panel_bg);
+        init_pair(pair_border_active, c_accent, panel_bg);
+    } else {
+        init_pair(pair_canvas, COLOR_CYAN, COLOR_BLACK);
+        init_pair(pair_panel_fill, COLOR_CYAN, COLOR_BLACK);
+        init_pair(pair_top_hud, COLOR_WHITE, COLOR_GREEN);
+        init_pair(pair_default, COLOR_CYAN, COLOR_BLACK);
+        init_pair(pair_border_normal, COLOR_CYAN, COLOR_BLACK);
+        init_pair(pair_border_active, COLOR_GREEN, COLOR_BLACK);
+    }
+    init_pair(pair_border_dead, COLOR_RED, panel_bg);
+    init_pair(pair_hp_high, COLOR_GREEN, panel_bg);
+    init_pair(pair_hp_med, COLOR_CYAN, panel_bg);
+    init_pair(pair_hp_low, COLOR_YELLOW, panel_bg);
+    init_pair(pair_hp_critical, COLOR_RED, panel_bg);
+    init_pair(pair_stamina, COLOR_BLUE, panel_bg);
+    init_pair(pair_stamina_full, COLOR_GREEN, panel_bg);
+    init_pair(pair_log, text_fg, panel_bg);
+    init_pair(pair_status_ok, accent_fg, panel_bg);
+    init_pair(pair_status_warn, COLOR_RED, panel_bg);
+    init_pair(pair_artifact_solar, COLOR_YELLOW, panel_bg);
+    init_pair(pair_artifact_lunar, COLOR_CYAN, panel_bg);
+    init_pair(pair_artifact_eclipse, COLOR_MAGENTA, panel_bg);
+    init_pair(pair_artifact_ground, COLOR_BLUE, panel_bg);
+    init_pair(pair_command_bar, COLOR_WHITE, COLOR_GREEN);
     init_pair(pair_inv_empty, COLOR_BLACK, COLOR_BLACK);
-    init_pair(pair_inv_splinter, COLOR_GREEN, theme_bg);
-    init_pair(pair_inv_venom, COLOR_MAGENTA, theme_bg);
-    init_pair(pair_inv_obsidian, COLOR_BLACK, theme_bg);
-    init_pair(pair_inv_frost, COLOR_BLUE, theme_bg);
-    init_pair(pair_inv_thunder, COLOR_YELLOW, theme_bg);
-    init_pair(pair_inv_iron, COLOR_BLUE, theme_bg);
-    init_pair(pair_inv_solar, COLOR_YELLOW, theme_bg);
-    init_pair(pair_inv_lunar, COLOR_CYAN, theme_bg);
-    init_pair(pair_inv_eclipse, COLOR_MAGENTA, theme_bg);
-    init_pair(pair_panel_title, COLOR_GREEN, theme_bg);
-    init_pair(pair_arena_title, COLOR_CYAN, theme_bg);
-    init_pair(pair_banner, COLOR_BLUE, theme_bg);
-    init_pair(pair_kill_counter, COLOR_GREEN, theme_bg);
-    init_pair(pair_overlay_win, COLOR_GREEN, theme_bg);
-    init_pair(pair_overlay_lose, COLOR_RED, theme_bg);
-    init_pair(pair_overlay_quit, COLOR_BLUE, theme_bg);
-    init_pair(pair_help, COLOR_BLUE, theme_bg);
+    init_pair(pair_inv_splinter, COLOR_GREEN, panel_bg);
+    init_pair(pair_inv_venom, COLOR_MAGENTA, panel_bg);
+    init_pair(pair_inv_obsidian, COLOR_WHITE, panel_bg);
+    init_pair(pair_inv_frost, COLOR_BLUE, panel_bg);
+    init_pair(pair_inv_thunder, COLOR_YELLOW, panel_bg);
+    init_pair(pair_inv_iron, COLOR_WHITE, panel_bg);
+    init_pair(pair_inv_solar, COLOR_YELLOW, panel_bg);
+    init_pair(pair_inv_lunar, COLOR_CYAN, panel_bg);
+    init_pair(pair_inv_eclipse, COLOR_MAGENTA, panel_bg);
+    init_pair(pair_panel_title, accent_fg, panel_bg);
+    init_pair(pair_arena_title, COLOR_CYAN, panel_bg);
+    init_pair(pair_banner, COLOR_WHITE, panel_bg);
+    init_pair(pair_kill_counter, accent_fg, panel_bg);
+    init_pair(pair_overlay_win, COLOR_GREEN, panel_bg);
+    init_pair(pair_overlay_lose, COLOR_RED, panel_bg);
+    init_pair(pair_overlay_quit, COLOR_CYAN, panel_bg);
+    init_pair(pair_help, COLOR_WHITE, panel_bg);
 }
 
 bool init_tui() {
@@ -1912,7 +1985,7 @@ bool init_tui() {
     keypad(stdscr, TRUE);
     nodelay(stdscr, TRUE);
     curs_set(0);
-    bkgd(COLOR_PAIR(pair_default));
+    bkgd(COLOR_PAIR(pair_canvas));
     return true;
 }
 
