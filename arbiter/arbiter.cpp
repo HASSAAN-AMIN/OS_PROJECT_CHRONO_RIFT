@@ -753,6 +753,7 @@ void track_enemy_deaths_locked() {
         int prev = previous_enemy_hp[i];
         int curr = shared_state->enemy_hp[i];
         if (prev > 0 && curr <= 0) {
+            normalize_waiters_locked();
             int dead_id = shared_state->enemy_display_id[i];
             if (dead_id <= 0) {
                 dead_id = i + 1;
