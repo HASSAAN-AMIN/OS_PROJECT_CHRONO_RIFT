@@ -143,12 +143,19 @@ extern int prev_enemy_display_id[game_state::max_enemies];
 extern int prev_player_inventory_fill[game_state::max_players];
 extern int prev_total_kills;
 extern int prev_ultimate_active;
+extern int prev_stun_active;
 extern int prev_dropped_weapon;
 extern long long weapon_drop_flash_frame;
 extern time_t last_event_time;
 extern char last_event_label[64];
 extern queue<int> enemy_target_queue;
 extern int cheat_drop_cursor;
+extern int entity_hit_frames[13];
+extern int inventory_new_item_frames[13][game_state::inventory_slots];
+extern int previous_inventory_items[13][game_state::inventory_slots];
+extern int action_banner_frames;
+extern int action_banner_pair;
+extern char action_banner_text[128];
 
 struct entity_snapshot {
     int hp;

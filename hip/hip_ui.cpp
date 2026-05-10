@@ -169,7 +169,7 @@ void draw_bar(
     }
 }
 
-void draw_inventory_strip(int y, int x, int width, const int *inventory, bool dead_overlay) {
+void draw_inventory_strip(int y, int x, int width, const int *inventory, bool dead_overlay, int entity_index) {
     if (width < game_state::inventory_slots + 2) {
         return;
     }
@@ -191,6 +191,18 @@ void draw_inventory_strip(int y, int x, int width, const int *inventory, bool de
         }
         int pair = weapon == 0 ? pair_inv_empty : weapon_color_pair_for(weapon);
         int attrs = COLOR_PAIR(pair) | A_REVERSE | A_BOLD;
+        bool pulse = false;
+        if (entity_index >= 0 && entity_index < 13) {
+            for (int j = s; j < s + run && j < game_state::inventory_slots; ++j) {
+                if (inventory_new_item_frames[entity_index][j] > 0 && weapon != 0) {
+                    pulse = true;
+                    break;
+                }
+            }
+        }
+        if (pulse) {
+            attrs |= A_BLINK;
+        }
         if (dead_overlay) {
             attrs = COLOR_PAIR(pair_border_dead) | A_REVERSE | A_BOLD;
         }
@@ -244,6 +256,9 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     }
     bool hit_flash_active = hit_flash_frame[entity_index] >= 0 &&
                             (current_frame - hit_flash_frame[entity_index]) < hit_flash_duration;
+    if (entity_hit_frames[entity_index] > 0) {
+        hit_flash_active = true;
+    }
     bool death_flash_active = death_flash_frame[entity_index] >= 0 &&
                               (current_frame - death_flash_frame[entity_index]) < death_flash_duration;
     bool shake_active = (current_frame - hit_flash_frame[entity_index]) < shake_duration;
@@ -269,6 +284,15 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         body_pair = pair_hp_critical;
     }
     paint_rect(y + 1, x + 1, h - 2, w - 2, body_pair);
+    if (hit_flash_active) {
+        attron(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
+        for (int yy = y + 1; yy < y + h - 1; ++yy) {
+            for (int xx = x + 1; xx < x + w - 1; ++xx) {
+                mvaddch(yy, xx, ' ');
+            }
+        }
+        attroff(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
+    }
     if (death_flash_active) {
         attron(COLOR_PAIR(pair_hp_critical) | A_REVERSE | A_BOLD);
         for (int yy = y + 1; yy < y + h - 1; ++yy) {
@@ -364,6 +388,9 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         if (death_flash_active) {
             hp_pair = pair_hp_critical;
         }
+        if (hit_flash_active && !es.dead) {
+            hp_pair = pair_hp_critical;
+        }
         draw_bar(inner_y + row, inner_x, inner_w, es.hp, es.max_hp, "hp", hp_pair, !es.dead && is_player, false);
         row++;
     }
@@ -429,7 +456,7 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         int inv_y = inner_y + inner_h - 2;
         int inv_h = 2;
         draw_box_at(inv_y, inner_x, inv_h, inner_w, border_pair, border_extra);
-        draw_inventory_strip(inv_y + inv_h - 1, inner_x + 1, inner_w - 2, es.inventory, es.dead);
+        draw_inventory_strip(inv_y + inv_h - 1, inner_x + 1, inner_w - 2, es.inventory, es.dead, entity_index);
         if (is_player && entity_index >= 0 && entity_index < game_state::max_players) {
             long long elapsed = current_frame - pickup_sweep_frame[entity_index];
             if (elapsed >= 0 && elapsed < 10) {
@@ -443,7 +470,10 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         mvaddch(inv_y, inner_x + 19, ' ');
         attroff(COLOR_PAIR(pair_panel_title) | A_BOLD);
     } else if (inner_h - row >= 1) {
-        draw_inventory_strip(inner_y + row, inner_x, inner_w, es.inventory, es.dead);
+        draw_inventory_strip(inner_y + row, inner_x, inner_w, es.inventory, es.dead, entity_index);
+    }
+    if (entity_index >= 0 && entity_index < 13 && entity_hit_frames[entity_index] > 0) {
+        entity_hit_frames[entity_index]--;
     }
 }
 
@@ -966,6 +996,46 @@ void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     }
 }
 
+void render_action_banner_overlay(int y, int x, int h, int w) {
+    if (action_banner_frames <= 0) {
+        return;
+    }
+    int text_len = (int)strlen(action_banner_text);
+    if (text_len <= 0) {
+        action_banner_frames = 0;
+        return;
+    }
+    int box_w = text_len + 8;
+    if (box_w < 24) {
+        box_w = 24;
+    }
+    if (box_w > w - 4) {
+        box_w = w - 4;
+    }
+    int box_h = 5;
+    if (box_h > h - 2) {
+        box_h = h - 2;
+    }
+    int box_y = y + (h - box_h) / 2;
+    int box_x = x + (w - box_w) / 2;
+    for (int yy = box_y; yy < box_y + box_h; ++yy) {
+        attron(COLOR_PAIR(action_banner_pair) | A_REVERSE | A_BOLD);
+        for (int xx = box_x; xx < box_x + box_w; ++xx) {
+            mvaddch(yy, xx, ' ');
+        }
+        attroff(COLOR_PAIR(action_banner_pair) | A_REVERSE | A_BOLD);
+    }
+    int border_attr = A_BOLD;
+    if ((action_banner_frames / 5) % 2 == 0) {
+        border_attr |= A_BLINK;
+    }
+    draw_double_box_at(box_y, box_x, box_h, box_w, action_banner_pair, border_attr);
+    attron(COLOR_PAIR(action_banner_pair) | A_REVERSE | A_BOLD);
+    mvprintw(box_y + 2, box_x + (box_w - text_len) / 2, "%s", action_banner_text);
+    attroff(COLOR_PAIR(action_banner_pair) | A_REVERSE | A_BOLD);
+    action_banner_frames--;
+}
+
 void render_command_bar(int y, int term_w) {
     attron(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
     for (int i = 0; i < term_w; ++i) {
@@ -1144,6 +1214,13 @@ void render_frame(const world_snapshot &snap) {
     erase();
     int term_h, term_w;
     getmaxyx(stdscr, term_h, term_w);
+    for (int i = 0; i < 13; ++i) {
+        for (int s = 0; s < game_state::inventory_slots; ++s) {
+            if (inventory_new_item_frames[i][s] > 0) {
+                inventory_new_item_frames[i][s]--;
+            }
+        }
+    }
     for (int i = 0; i < game_state::max_players; ++i) {
         if (!snap.players[i].active) {
             continue;
@@ -1152,6 +1229,7 @@ void render_frame(const world_snapshot &snap) {
         int hp = snap.players[i].hp;
         if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
             hit_flash_frame[idx] = current_frame;
+            entity_hit_frames[idx] = 30;
         }
         if (prev_hp[idx] > 0 && hp <= 0) {
             death_flash_frame[idx] = current_frame;
@@ -1162,6 +1240,13 @@ void render_frame(const world_snapshot &snap) {
         }
         prev_hp[idx] = hp;
         prev_stamina[idx] = snap.players[i].stamina;
+        for (int s = 0; s < game_state::inventory_slots; ++s) {
+            int item = snap.players[i].inventory[s];
+            if (previous_inventory_items[idx][s] == 0 && item != 0) {
+                inventory_new_item_frames[idx][s] = 60;
+            }
+            previous_inventory_items[idx][s] = item;
+        }
     }
     for (int i = 0; i < game_state::max_enemies; ++i) {
         if (!snap.enemies[i].active) {
@@ -1172,6 +1257,7 @@ void render_frame(const world_snapshot &snap) {
         int dead_count = snap.enemy_dead_count[i];
         if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
             hit_flash_frame[idx] = current_frame;
+            entity_hit_frames[idx] = 30;
         }
         if (prev_hp[idx] > 0 && hp <= 0) {
             death_flash_frame[idx] = current_frame;
@@ -1183,7 +1269,32 @@ void render_frame(const world_snapshot &snap) {
         prev_hp[idx] = hp;
         prev_stamina[idx] = snap.enemies[i].stamina;
         prev_enemy_dead_count[i] = dead_count;
+        for (int s = 0; s < game_state::inventory_slots; ++s) {
+            int item = snap.enemies[i].inventory[s];
+            if (previous_inventory_items[idx][s] == 0 && item != 0) {
+                inventory_new_item_frames[idx][s] = 60;
+            }
+            previous_inventory_items[idx][s] = item;
+        }
     }
+    if (!prev_ultimate_active && snap.ultimate_active) {
+        snprintf(action_banner_text, sizeof(action_banner_text), "ultimate triggered");
+        action_banner_pair = pair_artifact_solar;
+        action_banner_frames = 60;
+    }
+    if (!prev_stun_active && snap.stun_active) {
+        snprintf(action_banner_text, sizeof(action_banner_text), "stun pulse");
+        action_banner_pair = pair_status_warn;
+        action_banner_frames = 60;
+    }
+    if (prev_total_kills >= 0 && snap.total_kills > prev_total_kills) {
+        snprintf(action_banner_text, sizeof(action_banner_text), "enemy %d eliminated", snap.total_kills);
+        action_banner_pair = pair_overlay_lose;
+        action_banner_frames = 60;
+    }
+    prev_ultimate_active = snap.ultimate_active ? 1 : 0;
+    prev_stun_active = snap.stun_active ? 1 : 0;
+    prev_total_kills = snap.total_kills;
     if (prev_dropped_weapon == 0 && snap.current_dropped_weapon != 0) {
         weapon_drop_flash_frame = current_frame;
     }
@@ -1220,6 +1331,7 @@ void render_frame(const world_snapshot &snap) {
     render_player_panel(0, 0, main_h, left_w, snap);
     render_arena_panel(0, left_w, main_h, center_w, snap);
     render_enemy_panel(0, left_w + center_w, main_h, right_w, snap);
+    render_action_banner_overlay(0, left_w, main_h, center_w);
     render_command_bar(term_h - 1, term_w);
     if (snap.ultimate_active) {
         int pulse_pair = ((current_frame / 8) % 2 == 0) ? pair_artifact_solar : pair_artifact_lunar;

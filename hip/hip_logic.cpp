@@ -115,12 +115,19 @@ int prev_enemy_display_id[game_state::max_enemies] = {-1, -1, -1, -1, -1, -1, -1
 int prev_player_inventory_fill[game_state::max_players] = {-1, -1, -1, -1};
 int prev_total_kills = -1;
 int prev_ultimate_active = 0;
+int prev_stun_active = 0;
 int prev_dropped_weapon = 0;
 long long weapon_drop_flash_frame = -1000;
 time_t last_event_time = 0;
 char last_event_label[64] = {0};
 queue<int> enemy_target_queue;
 int cheat_drop_cursor = 0;
+int entity_hit_frames[13] = {0};
+int inventory_new_item_frames[13][game_state::inventory_slots] = {{0}};
+int previous_inventory_items[13][game_state::inventory_slots] = {{0}};
+int action_banner_frames = 0;
+int action_banner_pair = pair_status_warn;
+char action_banner_text[128] = {0};
 void initialize_animation_state() {
     for (int i = 0; i < 13; ++i) {
         hit_flash_frame[i] = -1000000;
@@ -128,6 +135,11 @@ void initialize_animation_state() {
         full_stamina_flash_frame[i] = -1000000;
         prev_hp[i] = -1;
         prev_stamina[i] = -1;
+        entity_hit_frames[i] = 0;
+        for (int s = 0; s < game_state::inventory_slots; ++s) {
+            inventory_new_item_frames[i][s] = 0;
+            previous_inventory_items[i][s] = 0;
+        }
     }
     for (int i = 0; i < game_state::max_players; ++i) {
         stamina_ready_pulse_frame[i] = -1000000;
@@ -145,8 +157,12 @@ void initialize_animation_state() {
     ultimate_shockwave_frame = -1000000;
     prev_total_kills = -1;
     prev_ultimate_active = 0;
+    prev_stun_active = 0;
     prev_dropped_weapon = 0;
     weapon_drop_flash_frame = -1000000;
+    action_banner_frames = 0;
+    action_banner_pair = pair_status_warn;
+    memset(action_banner_text, 0, sizeof(action_banner_text));
 }
 
 
