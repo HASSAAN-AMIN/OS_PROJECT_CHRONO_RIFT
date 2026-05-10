@@ -607,6 +607,10 @@ void submit_player_action_request(int player_id, int action) {
         unlock_memory();
         return;
     }
+    if (shared_state->player_stamina[player_id] < game_state::player_max_stamina) {
+        unlock_memory();
+        return;
+    }
     int target = pending_target_for_action_locked(action);
     shared_state->player_pending_action[player_id] = action;
     shared_state->player_pending_target[player_id] = target;
