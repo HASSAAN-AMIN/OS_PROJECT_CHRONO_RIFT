@@ -145,6 +145,7 @@ long long weapon_drop_flash_frame = -1000;
 time_t last_event_time = 0;
 char last_event_label[64] = {0};
 queue<int> enemy_target_queue;
+int cheat_drop_cursor = 0;
 
 void initialize_animation_state() {
     for (int i = 0; i < 13; ++i) {
@@ -727,6 +728,80 @@ void perform_cheat_damage(int player_id) {
     unlock_memory();
 }
 
+void perform_cheat_drop_collectible(int player_id) {
+    if (!lock_memory()) {
+        return;
+    }
+    if (player_id < 0 || player_id >= game_state::max_players || player_id >= shared_state->active_player_count) {
+        unlock_memory();
+        return;
+    }
+    if (shared_state->current_dropped_weapon != 0) {
+        unlock_memory();
+        return;
+    }
+    int pool[] = {
+        game_state::splinter_stick_id,
+        game_state::venom_dagger_id,
+        game_state::obsidian_axe_id,
+        game_state::frostbow_id,
+        game_state::thunderstaff_id,
+        game_state::iron_halberd_id,
+        game_state::solar_core_id,
+        game_state::lunar_blade_id,
+        game_state::eclipse_relic_id
+    };
+    int pool_size = (int)(sizeof(pool) / sizeof(pool[0]));
+    if (cheat_drop_cursor < 0 || cheat_drop_cursor >= pool_size) {
+        cheat_drop_cursor = 0;
+    }
+    int weapon_id = pool[cheat_drop_cursor];
+    cheat_drop_cursor = (cheat_drop_cursor + 1) % pool_size;
+    shared_state->current_dropped_weapon = weapon_id;
+    if (weapon_id == game_state::solar_core_id) {
+        shared_state->solar_core_holder = -1;
+    } else if (weapon_id == game_state::lunar_blade_id) {
+        shared_state->lunar_blade_holder = -1;
+    } else if (weapon_id == game_state::eclipse_relic_id) {
+        shared_state->eclipse_relic_holder = -1;
+        shared_state->eclipse_relic_present = 1;
+    }
+    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "cheat_j_drop_%d", weapon_id);
+    unlock_memory();
+}
+
+void perform_cheat_ultimate_loadout(int player_id) {
+    if (!lock_memory()) {
+        return;
+    }
+    if (player_id < 0 || player_id >= game_state::max_players || player_id >= shared_state->active_player_count) {
+        unlock_memory();
+        return;
+    }
+    int active = shared_state->active_player_index;
+    if (active != player_id) {
+        unlock_memory();
+        return;
+    }
+    for (int s = 0; s < game_state::inventory_slots; ++s) {
+        shared_state->player_primary_inventory[player_id][s] = 0;
+    }
+    for (int s = 0; s < game_state::solar_core_slots && s < game_state::inventory_slots; ++s) {
+        shared_state->player_primary_inventory[player_id][s] = game_state::solar_core_id;
+    }
+    int lunar_start = game_state::solar_core_slots;
+    for (int s = 0; s < game_state::lunar_blade_slots; ++s) {
+        int idx = lunar_start + s;
+        if (idx >= 0 && idx < game_state::inventory_slots) {
+            shared_state->player_primary_inventory[player_id][idx] = game_state::lunar_blade_id;
+        }
+    }
+    shared_state->solar_core_holder = player_id;
+    shared_state->lunar_blade_holder = player_id;
+    snprintf(shared_state->last_event, sizeof(shared_state->last_event), "cheat_h_ultimate_p%d", player_id + 1);
+    unlock_memory();
+}
+
 void perform_exhaust(int player_id) {
     submit_player_action_request(player_id, game_state::action_exhaust);
 }
@@ -859,6 +934,10 @@ void handle_key_for_player(int player_id, int ch) {
         case 't':
         case 'T':
         case '\t': cycle_target_enemy_for_player(player_id); break;
+        case 'h':
+        case 'H': perform_cheat_ultimate_loadout(player_id); break;
+        case 'j':
+        case 'J': perform_cheat_drop_collectible(player_id); break;
         case 'k':
         case 'K': perform_cheat_damage(player_id); break;
         default: break;
@@ -1952,7 +2031,7 @@ void render_command_bar(int y, int term_w) {
     for (int i = 0; i < term_w; ++i) {
         mvaddch(y, i, ' ');
     }
-    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap-select [T/TAB]target [K]cheat [?]help [q]quit ";
+    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap-select [T/TAB]target [H/J/K]cheat [?]help [q]quit ";
     int legend_len = (int)strlen(legend);
     int start = (term_w - legend_len) / 2;
     if (start < 0) {
@@ -2032,6 +2111,8 @@ void render_help_overlay(int term_h, int term_w) {
         "8  use weapon  - hit with best weapon in inventory",
         "9  swap in     - open storage selection overlay",
         "t/tab target   - cycle focused enemy target",
+        "h  cheat ult   - force solar+lunar into active inventory",
+        "j  cheat drop  - drop next collectible weapon on ground",
         "k  cheat dmg   - direct -50 hp on target enemy",
         "?  toggle this help",
         "q  quit (sigterm to arbiter & asp)"
@@ -2316,7 +2397,7 @@ void *input_dispatcher_loop(void *) {
                 }
                 break;
             }
-            if ((ch == '?' || ch == 'h' || ch == 'H') && !show_swap_overlay) {
+            if (ch == '?' && !show_swap_overlay) {
                 show_help_overlay = !show_help_overlay;
                 continue;
             }
