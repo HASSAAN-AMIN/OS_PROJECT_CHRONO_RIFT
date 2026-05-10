@@ -1,18 +1,18 @@
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -pthread
 LIBS = -lncurses -lrt
-TARGETS = arbiters hips asps
+TARGETS = judge player enemy
 
 all: clean $(TARGETS)
 	@echo Build complete.
 
-arbiters:
+judge:
 	$(CXX) $(CXXFLAGS) arbiter/*.cpp -o $@ $(LIBS)
 
-hips:
+player:
 	$(CXX) $(CXXFLAGS) hip/hip_main.cpp -o $@ $(LIBS)
 
-asps:
+enemy:
 	$(CXX) $(CXXFLAGS) asp/*.cpp -o $@ $(LIBS)
 
 clean:
