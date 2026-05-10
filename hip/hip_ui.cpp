@@ -1053,7 +1053,7 @@ void render_action_banner_overlay(int y, int x, int h, int w) {
 }
 
 void render_command_bar(int y, int term_w) {
-    attron(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
+    attron(COLOR_PAIR(pair_command_bar) | A_BOLD);
     for (int i = 0; i < term_w; ++i) {
         mvaddch(y, i, ' ');
     }
@@ -1065,7 +1065,7 @@ void render_command_bar(int y, int term_w) {
         legend_len = term_w;
     }
     mvprintw(y, start, "%.*s", legend_len, legend);
-    attroff(COLOR_PAIR(pair_command_bar) | A_REVERSE | A_BOLD);
+    attroff(COLOR_PAIR(pair_command_bar) | A_BOLD);
 }
 
 void render_overlay(int term_h, int term_w, const char *title, const char *line1, const char *line2, int color) {
@@ -1102,6 +1102,73 @@ void render_overlay(int term_h, int term_w, const char *title, const char *line1
     attron(COLOR_PAIR(color) | A_REVERSE | A_BOLD | A_BLINK);
     mvprintw(box_y + box_h - 2, box_x + (box_w - el) / 2, "%s", exit_hint);
     attroff(COLOR_PAIR(color) | A_REVERSE | A_BOLD | A_BLINK);
+}
+
+void render_victory_scene(int term_h, int term_w, const world_snapshot &snap) {
+    paint_rect(0, 0, term_h, term_w, pair_overlay_win);
+    for (int i = 0; i < 80; ++i) {
+        int x = (int)((current_frame * 4 + i * 31) % term_w);
+        int y = (int)((current_frame + i * 11) % term_h);
+        if (y >= term_h - 1) {
+            continue;
+        }
+        int pair = pair_border_v1 + (i % 7);
+        attron(COLOR_PAIR(pair) | A_BOLD);
+        mvaddch(y, x, '*');
+        attroff(COLOR_PAIR(pair) | A_BOLD);
+        int tx = x - (i % 4) - 1;
+        int ty = y - 1;
+        if (tx >= 0 && tx < term_w && ty >= 0 && ty < term_h) {
+            attron(COLOR_PAIR(pair_overlay_win) | A_BOLD);
+            mvaddch(ty, tx, '.');
+            attroff(COLOR_PAIR(pair_overlay_win) | A_BOLD);
+        }
+    }
+    int box_w = term_w * 80 / 100;
+    int box_h = term_h * 70 / 100;
+    if (box_w < 56) {
+        box_w = 56;
+    }
+    if (box_h < 14) {
+        box_h = 14;
+    }
+    if (box_w > term_w - 4) {
+        box_w = term_w - 4;
+    }
+    if (box_h > term_h - 4) {
+        box_h = term_h - 4;
+    }
+    int box_y = (term_h - box_h) / 2;
+    int box_x = (term_w - box_w) / 2;
+    for (int yy = box_y; yy < box_y + box_h; ++yy) {
+        attron(COLOR_PAIR(pair_bg_arena));
+        for (int xx = box_x; xx < box_x + box_w; ++xx) {
+            mvaddch(yy, xx, ' ');
+        }
+        attroff(COLOR_PAIR(pair_bg_arena));
+    }
+    draw_double_box_at(box_y, box_x, box_h, box_w, pair_default, A_BOLD);
+    const char *title = "  V I C T O R Y  ";
+    int title_len = (int)strlen(title);
+    attron(COLOR_PAIR(pair_default) | A_BOLD | A_BLINK);
+    mvprintw(box_y + 2, box_x + (box_w - title_len) / 2, "%s", title);
+    attroff(COLOR_PAIR(pair_default) | A_BOLD | A_BLINK);
+    char line1[96];
+    char line2[96];
+    char line3[96];
+    snprintf(line1, sizeof(line1), "all 10 enemies defeated");
+    snprintf(line2, sizeof(line2), "total kills: %d    roll seed: %d", snap.total_kills, snap.roll_number);
+    snprintf(line3, sizeof(line3), "the chrono rift bends to your squad");
+    attron(COLOR_PAIR(pair_default) | A_BOLD);
+    mvprintw(box_y + box_h / 2 - 1, box_x + (box_w - (int)strlen(line1)) / 2, "%s", line1);
+    mvprintw(box_y + box_h / 2 + 1, box_x + (box_w - (int)strlen(line2)) / 2, "%s", line2);
+    mvprintw(box_y + box_h / 2 + 3, box_x + (box_w - (int)strlen(line3)) / 2, "%s", line3);
+    attroff(COLOR_PAIR(pair_default) | A_BOLD);
+    const char *exit_hint = "press q to exit";
+    int el = (int)strlen(exit_hint);
+    attron(COLOR_PAIR(pair_default) | A_BOLD | A_BLINK);
+    mvprintw(box_y + box_h - 2, box_x + (box_w - el) / 2, "%s", exit_hint);
+    attroff(COLOR_PAIR(pair_default) | A_BOLD | A_BLINK);
 }
 
 void render_help_overlay(int term_h, int term_w) {
@@ -1356,11 +1423,7 @@ void render_frame(const world_snapshot &snap) {
     }
 
     if (snap.outcome == game_state::outcome_win) {
-        char line1[64];
-        char line2[64];
-        snprintf(line1, sizeof(line1), "all 10 enemies killed");
-        snprintf(line2, sizeof(line2), "total kills %d  roll seed %d", snap.total_kills, snap.roll_number);
-        render_overlay(term_h, term_w, "  V I C T O R Y  ", line1, line2, pair_overlay_win);
+        render_victory_scene(term_h, term_w, snap);
     } else if (snap.outcome == game_state::outcome_lose) {
         char line1[64];
         char line2[64];
@@ -1400,7 +1463,7 @@ void init_color_pairs() {
     int c_player_bg     = COLOR_BLUE;
     int c_arena_bg      = COLOR_BLACK;
     int c_enemy_bg      = COLOR_BLACK;
-    int c_footer_bg     = COLOR_BLACK;
+    int c_footer_bg     = COLOR_GREEN;
     int c_player_box_bg = COLOR_BLACK;
     int c_enemy_box_bg  = COLOR_BLACK;
     int c_timeline_bg   = COLOR_BLACK;
@@ -1444,7 +1507,7 @@ void init_color_pairs() {
         init_color(c_player_bg,      8,  14,  52);
         init_color(c_arena_bg,       6,  28,  32);
         init_color(c_enemy_bg,      22,   8,  42);
-        init_color(c_footer_bg,      4,   4,  12);
+        init_color(c_footer_bg,     20, 230, 150);
         init_color(c_player_box_bg,  4,  10,  40);
         init_color(c_enemy_box_bg,  16,   5,  32);
         init_color(c_timeline_bg,    4,   4,  26);
@@ -1506,7 +1569,7 @@ void init_color_pairs() {
 
     init_pair(pair_kill_counter,      c_green,        -1);
 
-    init_pair(pair_overlay_win,       c_green,        COLOR_BLACK);
+    init_pair(pair_overlay_win,       COLOR_WHITE,    c_player_bg);
     init_pair(pair_overlay_lose,      c_red,          COLOR_BLACK);
     init_pair(pair_overlay_quit,      c_sky,          COLOR_BLACK);
 
