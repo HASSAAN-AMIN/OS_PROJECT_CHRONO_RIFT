@@ -1005,9 +1005,9 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     if (es.dead) {
         border_pair = pair_border_dead;
         border_extra = A_BOLD;
-    } else if (!is_player) {
-        border_pair = pair_border_active;
-    } else if (es.turn) {
+        draw_titled_box(y, x, h, w, title, border_pair, border_extra);
+    } else if (is_player && es.turn) {
+        // active player — double box with reversed highlighted title
         border_pair = pair_border_active;
         border_extra = A_BOLD;
         int active_pair = varied_border_pair(border_pair, y, x);
@@ -1018,13 +1018,20 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         mvaddch(y, x + 2, ' ');
         mvprintw(y, x + 3, " %.*s ", title_len, title);
         attroff(attr);
+    } else if (!is_player && es.turn) {
+        // targeted enemy — bright yellow double box, >>TITLE<< reversed label
+        border_pair = pair_border_active;
+        border_extra = A_BOLD;
+        draw_double_box_at(y, x, h, w, pair_border_active, border_extra);
+        int title_len = (int)strlen(title);
+        int max_t = w - 10;
+        if (title_len > max_t) { title_len = max_t; }
+        chtype attr = COLOR_PAIR(pair_border_active) | A_BOLD | A_REVERSE;
+        attron(attr);
+        mvprintw(y, x + 2, ">>%.*s<<", title_len, title);
+        attroff(attr);
     } else {
         draw_titled_box(y, x, h, w, title, border_pair, border_extra);
-    }
-    if (es.dead || (!es.turn && !es.dead)) {
-        if (!es.turn) {
-            draw_titled_box(y, x, h, w, title, border_pair, border_extra);
-        }
     }
     int inner_y = y + 1;
     int inner_x = x + 2;
@@ -1067,9 +1074,13 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
             attron(COLOR_PAIR(pair_default));
             mvprintw(inner_y + row, inner_x, "dmg %d", es.damage);
             attroff(COLOR_PAIR(pair_default));
-            if (es.turn) {
+            if (es.turn && is_player) {
                 attron(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
                 mvprintw(inner_y + row, inner_x + 8, "<< YOUR TURN >>");
+                attroff(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+            } else if (es.turn && !is_player) {
+                attron(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+                mvprintw(inner_y + row, inner_x + 8, "** TARGET **");
                 attroff(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
             }
         }
@@ -1309,13 +1320,12 @@ void render_enemy_panel(int y, int x, int h, int w, const world_snapshot &snap) 
 void render_banner(int y, int x, int w) {
     int rainbow_pairs[5] = {pair_bg_banner_1, pair_bg_banner_2, pair_bg_banner_3, pair_bg_banner_4, pair_bg_banner_5};
     if (w < 60) {
-        paint_rect(y, x, 1, w, pair_bg_banner_3);
-        attron(COLOR_PAIR(pair_banner) | A_BOLD);
+        attron(COLOR_PAIR(pair_bg_banner_3) | A_BOLD);
         const char *short_title = "  CHRONO RIFT  ";
         int len = (int)strlen(short_title);
         int sx = x + (w - len) / 2;
         mvprintw(y, sx, "%s", short_title);
-        attroff(COLOR_PAIR(pair_banner) | A_BOLD);
+        attroff(COLOR_PAIR(pair_bg_banner_3) | A_BOLD);
         return;
     }
     const char *line1 = "  ____ _   _ ____   ___  _   _  ___    ____  ___ _____ _____ ";
@@ -1331,10 +1341,9 @@ void render_banner(int y, int x, int w) {
         sx = x + 1;
     }
     for (int i = 0; i < line_count; ++i) {
-        paint_rect(y + i, x, 1, w, rainbow_pairs[i]);
-        attron(COLOR_PAIR(pair_banner) | A_BOLD);
+        attron(COLOR_PAIR(rainbow_pairs[i]) | A_BOLD);
         mvprintw(y + i, sx, "%.*s", w - 2, lines[i]);
-        attroff(COLOR_PAIR(pair_banner) | A_BOLD);
+        attroff(COLOR_PAIR(rainbow_pairs[i]) | A_BOLD);
     }
 }
 
@@ -1946,36 +1955,36 @@ void init_color_pairs() {
 
         // ---- very dark panel backgrounds ------------------------------------
         // values are in ncurses units: 0-1000
-        init_color(c_canvas,         28,  28,  55);  // near-black slate-blue
-        init_color(c_player_bg,       8,  18,  88);  // deep navy
-        init_color(c_arena_bg,        6,  42,  48);  // deep teal-black
-        init_color(c_enemy_bg,       38,   6,  75);  // deep violet-black
-        init_color(c_footer_bg,       5,   5,  18);  // almost black
-        init_color(c_player_box_bg,   6,  12,  62);  // dark navy interior
-        init_color(c_enemy_box_bg,   25,   5,  45);  // dark purple interior
-        init_color(c_timeline_bg,     6,   5,  38);  // dark indigo
-        init_color(c_log_bg,          5,  25,  28);  // dark teal-black
-        init_color(c_status_bg,       6,  12,  32);  // dark midnight blue
-        init_color(c_artifact_bg,     4,   8,  22);  // near-black navy
+        init_color(c_canvas,          22,  22,  48);  // near-black slate-blue
+        init_color(c_player_bg,        5,  12,  80);  // deep navy
+        init_color(c_arena_bg,         4,  38,  42);  // deep teal-black
+        init_color(c_enemy_bg,        32,   4,  68);  // deep violet-black
+        init_color(c_footer_bg,        4,   4,  15);  // almost black
+        init_color(c_player_box_bg,    4,   8,  55);  // dark navy interior
+        init_color(c_enemy_box_bg,    20,   3,  40);  // dark purple interior
+        init_color(c_timeline_bg,      4,   3,  32);  // dark indigo
+        init_color(c_log_bg,           3,  20,  24);  // dark teal-black
+        init_color(c_status_bg,        4,   8,  26);  // dark midnight blue
+        init_color(c_artifact_bg,      2,   5,  18);  // near-black navy
 
-        // ---- vivid banner strip colors (saturated, mid-brightness) ----------
-        init_color(c_banner_1,      920, 100, 100);  // vivid crimson
-        init_color(c_banner_2,      100, 280, 950);  // vivid royal blue
-        init_color(c_banner_3,       80, 870, 180);  // vivid emerald
-        init_color(c_banner_4,       40, 760, 920);  // vivid sky cyan
-        init_color(c_banner_5,      720,  40, 960);  // vivid purple
+        // ---- vivid banner strip colors (not used as bg anymore, kept for fallback)
+        init_color(c_banner_1,       950,  80,  80);  // vivid crimson
+        init_color(c_banner_2,        80, 240, 980);  // vivid royal blue
+        init_color(c_banner_3,        60, 900, 160);  // vivid emerald
+        init_color(c_banner_4,        20, 780, 960);  // vivid sky cyan
+        init_color(c_banner_5,       750,  20, 980);  // vivid purple
 
-        // ---- neon / vibrant text colors -------------------------------------
-        init_color(c_neon_yellow,  1000, 960,   0);  // electric yellow
-        init_color(c_neon_orange,  1000, 420,   0);  // neon orange
-        init_color(c_neon_lime,     160,1000,  60);  // neon lime green
-        init_color(c_neon_sky,        0, 720,1000);  // sky blue
-        init_color(c_neon_pink,    1000,  80, 560);  // hot pink
-        init_color(c_neon_gold,    1000, 820,   0);  // gold
-        init_color(c_neon_lavender, 820, 320,1000);  // neon lavender
-        init_color(c_neon_mint,       0, 960, 660);  // mint green
-        init_color(c_neon_red,     1000,  40,  80);  // neon red
-        init_color(c_neon_cyan,       0, 960, 980);  // neon cyan
+        // ---- neon / vibrant text colors (pushed to maximum saturation) ------
+        init_color(c_neon_yellow,   1000, 980,   0);  // electric yellow
+        init_color(c_neon_orange,   1000, 380,   0);  // neon orange
+        init_color(c_neon_lime,      100,1000,   0);  // pure neon lime
+        init_color(c_neon_sky,         0, 680,1000);  // sky blue
+        init_color(c_neon_pink,     1000,   0, 520);  // hot pink / magenta
+        init_color(c_neon_gold,     1000, 860,   0);  // gold
+        init_color(c_neon_lavender,  860, 280,1000);  // neon lavender
+        init_color(c_neon_mint,        0,1000, 620);  // pure mint
+        init_color(c_neon_red,      1000,   0,  60);  // pure neon red
+        init_color(c_neon_cyan,        0,1000,1000);  // pure neon cyan
     }
 
     // ---- color pair definitions ---------------------------------------------
@@ -2062,12 +2071,12 @@ void init_color_pairs() {
     init_pair(pair_bg_status,         COLOR_WHITE,     c_status_bg);
     init_pair(pair_bg_artifact,       COLOR_WHITE,     c_artifact_bg);
 
-    // Banner strip rows (vivid bg, gold text)
-    init_pair(pair_bg_banner_1,       c_neon_gold,     c_banner_1);
-    init_pair(pair_bg_banner_2,       c_neon_yellow,   c_banner_2);
-    init_pair(pair_bg_banner_3,       c_neon_yellow,   c_banner_3);
-    init_pair(pair_bg_banner_4,       c_neon_gold,     c_banner_4);
-    init_pair(pair_bg_banner_5,       c_neon_yellow,   c_banner_5);
+    // Banner rows: vivid colored text on the dark arena bg — no solid color blocks
+    init_pair(pair_bg_banner_1,       c_neon_red,      c_arena_bg);  // crimson
+    init_pair(pair_bg_banner_2,       c_neon_orange,   c_arena_bg);  // orange
+    init_pair(pair_bg_banner_3,       c_neon_yellow,   c_arena_bg);  // electric yellow
+    init_pair(pair_bg_banner_4,       c_neon_lime,     c_arena_bg);  // neon lime
+    init_pair(pair_bg_banner_5,       c_neon_cyan,     c_arena_bg);  // neon cyan
 
     // 7 border variants — rainbow cycling: cyan, sky, lime, lavender, gold, pink, mint
     init_pair(pair_border_v1,         c_neon_cyan,     -1);
