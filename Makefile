@@ -1,16 +1,16 @@
-cc = g++
-cflags = -Wall -Wextra -pthread
+CXX = g++
+CXXFLAGS = -Wall -Wextra -pthread
 
-all: judge player enemy
+all: judge hips enemy
 
 judge: arbiter/arbiter.cpp
-	$(cc) $(cflags) arbiter/arbiter.cpp -o judge -lrt
+	$(CXX) $(CXXFLAGS) arbiter/arbiter.cpp -o judge -lrt
 
-player: hip/hip.cpp
-	$(cc) $(cflags) hip/hip.cpp -o player -lncurses -lrt
+hips: hip/hip_main.cpp hip/hip_ui.cpp hip/hip_logic.cpp hip/hip_ui.h hip/hip_logic.h hip/hip_shared.h
+	$(CXX) $(CXXFLAGS) hip/hip_main.cpp hip/hip_ui.cpp hip/hip_logic.cpp -o hips -lncurses -lrt
 
 enemy: asp/asp.cpp
-	$(cc) $(cflags) asp/asp.cpp -o enemy -lrt
+	$(CXX) $(CXXFLAGS) asp/asp.cpp -o enemy -lrt
 
 clean:
-	rm -f judge player enemy arbiter_bin hip_bin asp_bin arbiter_exec hip_exec asp_exec arbiter/arbiter hip/hip asp/asp
+	rm -f judge hips enemy player arbiter_bin hip_bin asp_bin arbiter_exec hip_exec asp_exec arbiter/arbiter hip/hip asp/asp
