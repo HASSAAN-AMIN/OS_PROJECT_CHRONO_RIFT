@@ -26,7 +26,7 @@ const useconds_t input_sleep_us = 16000;
 const useconds_t player_idle_sleep_us = 60000;
 const int pending_target_auto = -999999;
 const long long hit_flash_duration = 6;
-const long long death_flash_duration = 18;
+const long long death_flash_duration = 48;
 const long long shake_duration = 4;
 const long long full_stamina_flash_duration = 3;
 const long long drop_flash_duration = 10;
@@ -127,13 +127,52 @@ long long current_frame = 0;
 long long hit_flash_frame[13] = {0};
 long long death_flash_frame[13] = {0};
 long long full_stamina_flash_frame[13] = {0};
+long long stamina_ready_pulse_frame[game_state::max_players] = {0};
+long long enemy_spawn_flash_frame[game_state::max_enemies] = {0};
+long long kill_pop_frame = -1000000;
+long long deadlock_log_frame = -1000000;
+long long ultimate_shockwave_frame = -1000000;
+long long pickup_sweep_frame[game_state::max_players] = {0};
 int prev_hp[13] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
 int prev_stamina[13] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+int prev_enemy_dead_count[game_state::max_enemies] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+int prev_enemy_display_id[game_state::max_enemies] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+int prev_player_inventory_fill[game_state::max_players] = {-1, -1, -1, -1};
+int prev_total_kills = -1;
+int prev_ultimate_active = 0;
 int prev_dropped_weapon = 0;
 long long weapon_drop_flash_frame = -1000;
 time_t last_event_time = 0;
 char last_event_label[64] = {0};
 queue<int> enemy_target_queue;
+
+void initialize_animation_state() {
+    for (int i = 0; i < 13; ++i) {
+        hit_flash_frame[i] = -1000000;
+        death_flash_frame[i] = -1000000;
+        full_stamina_flash_frame[i] = -1000000;
+        prev_hp[i] = -1;
+        prev_stamina[i] = -1;
+    }
+    for (int i = 0; i < game_state::max_players; ++i) {
+        stamina_ready_pulse_frame[i] = -1000000;
+        pickup_sweep_frame[i] = -1000000;
+        prev_player_inventory_fill[i] = -1;
+    }
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        prev_enemy_dead_count[i] = -1;
+        prev_enemy_display_id[i] = -1;
+        enemy_spawn_flash_frame[i] = -1000000;
+    }
+    current_frame = 0;
+    kill_pop_frame = -1000000;
+    deadlock_log_frame = -1000000;
+    ultimate_shockwave_frame = -1000000;
+    prev_total_kills = -1;
+    prev_ultimate_active = 0;
+    prev_dropped_weapon = 0;
+    weapon_drop_flash_frame = -1000000;
+}
 
 struct entity_snapshot {
     int hp;
@@ -669,6 +708,25 @@ void cycle_target_enemy_for_player(int player_id) {
     unlock_memory();
 }
 
+void perform_cheat_damage(int player_id) {
+    if (!lock_memory()) {
+        return;
+    }
+    if (player_id < 0 || player_id >= game_state::max_players || player_id >= shared_state->active_player_count) {
+        unlock_memory();
+        return;
+    }
+    int target = peek_target_enemy_locked();
+    if (target < 0 || target >= game_state::max_enemies || shared_state->enemy_hp[target] <= 0) {
+        target = find_first_living_enemy_locked();
+    }
+    if (target >= 0 && target < game_state::max_enemies) {
+        shared_state->enemy_hp[target] -= 50;
+        snprintf(shared_state->last_event, sizeof(shared_state->last_event), "cheat_k_enemy_%d", target + 1);
+    }
+    unlock_memory();
+}
+
 void perform_exhaust(int player_id) {
     submit_player_action_request(player_id, game_state::action_exhaust);
 }
@@ -801,6 +859,8 @@ void handle_key_for_player(int player_id, int ch) {
         case 't':
         case 'T':
         case '\t': cycle_target_enemy_for_player(player_id); break;
+        case 'k':
+        case 'K': perform_cheat_damage(player_id); break;
         default: break;
     }
 }
@@ -1131,12 +1191,42 @@ void draw_inventory_strip(int y, int x, int width, const int *inventory, bool de
     }
 }
 
+void draw_inventory_sweep_overlay(int y, int x, int width, int slots_to_fill) {
+    if (width < game_state::inventory_slots + 2) {
+        return;
+    }
+    if (slots_to_fill <= 0) {
+        return;
+    }
+    if (slots_to_fill > game_state::inventory_slots) {
+        slots_to_fill = game_state::inventory_slots;
+    }
+    int slot_w = (width - 2) / game_state::inventory_slots;
+    if (slot_w < 1) {
+        slot_w = 1;
+    }
+    if (slot_w > 3) {
+        slot_w = 3;
+    }
+    int total_w = slot_w * game_state::inventory_slots;
+    int start_x = x + (width - total_w) / 2;
+    attron(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
+    for (int s = 0; s < slots_to_fill; ++s) {
+        for (int k = 0; k < slot_w; ++k) {
+            mvaddch(y, start_x + s * slot_w + k, ' ');
+        }
+    }
+    attroff(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
+}
+
 void render_entity(int y, int x, int h, int w, const char *title, const entity_snapshot &es, bool is_player, int entity_index) {
     if (entity_index < 0 || entity_index >= 13) {
         entity_index = 0;
     }
-    bool hit_flash_active = (current_frame - hit_flash_frame[entity_index]) < hit_flash_duration;
-    bool death_flash_active = (current_frame - death_flash_frame[entity_index]) < death_flash_duration;
+    bool hit_flash_active = hit_flash_frame[entity_index] >= 0 &&
+                            (current_frame - hit_flash_frame[entity_index]) < hit_flash_duration;
+    bool death_flash_active = death_flash_frame[entity_index] >= 0 &&
+                              (current_frame - death_flash_frame[entity_index]) < death_flash_duration;
     bool shake_active = (current_frame - hit_flash_frame[entity_index]) < shake_duration;
     if (shake_active) {
         int offset = (current_frame % 2 == 0) ? 1 : -1;
@@ -1178,6 +1268,30 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     if (death_flash_active) {
         border_pair = pair_hp_critical;
         border_extra = A_BOLD | A_BLINK;
+    }
+    if (is_player && entity_index >= 0 && entity_index < game_state::max_players) {
+        long long elapsed = current_frame - stamina_ready_pulse_frame[entity_index];
+        if (elapsed >= 0 && elapsed < 18) {
+            int phase = (int)((elapsed / 3) % 2);
+            if (phase == 0) {
+                border_pair = pair_default;
+                border_extra |= A_BOLD | A_BLINK;
+            }
+        }
+    }
+    if (!is_player) {
+        int enemy_slot = entity_index - game_state::max_players;
+        if (enemy_slot >= 0 && enemy_slot < game_state::max_enemies) {
+            long long elapsed = current_frame - enemy_spawn_flash_frame[enemy_slot];
+            if (elapsed >= 0 && elapsed < 20) {
+                int sequence[7] = {
+                    pair_border_v1, pair_border_v2, pair_border_v3, pair_border_v4,
+                    pair_border_v5, pair_border_v6, pair_border_v7
+                };
+                border_pair = sequence[elapsed % 7];
+                border_extra |= A_BOLD | A_BLINK;
+            }
+        }
     }
     if (es.dead) {
         border_pair = pair_border_dead;
@@ -1239,7 +1353,8 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         if (!es.dead && es.stamina >= es.max_stamina) {
             sta_pair = pair_stamina_full;
         }
-        bool stamina_full_flash_active = (current_frame - full_stamina_flash_frame[entity_index]) < full_stamina_flash_duration;
+        bool stamina_full_flash_active = full_stamina_flash_frame[entity_index] >= 0 &&
+                                         (current_frame - full_stamina_flash_frame[entity_index]) < full_stamina_flash_duration;
         draw_bar(inner_y + row, inner_x, inner_w, es.stamina, es.max_stamina, "sta", sta_pair, false, stamina_full_flash_active);
         row++;
     }
@@ -1281,11 +1396,28 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         }
         row++;
     }
+    if (is_player && es.turn) {
+        int bounce[4] = {1, 2, 1, 0};
+        int shift = bounce[(current_frame / 3) % 4];
+        int arrow_x = x + 2 + shift;
+        if (arrow_x < x + w - 2) {
+            attron(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+            mvprintw(y, arrow_x, "▶");
+            attroff(COLOR_PAIR(pair_border_active) | A_BOLD | A_BLINK);
+        }
+    }
     if (inner_h - row >= 2) {
         int inv_y = inner_y + inner_h - 2;
         int inv_h = 2;
         draw_box_at(inv_y, inner_x, inv_h, inner_w, border_pair, border_extra);
         draw_inventory_strip(inv_y + inv_h - 1, inner_x + 1, inner_w - 2, es.inventory, es.dead);
+        if (is_player && entity_index >= 0 && entity_index < game_state::max_players) {
+            long long elapsed = current_frame - pickup_sweep_frame[entity_index];
+            if (elapsed >= 0 && elapsed < 10) {
+                int slots = (int)(((elapsed + 1) * game_state::inventory_slots) / 10);
+                draw_inventory_sweep_overlay(inv_y + inv_h - 1, inner_x + 1, inner_w - 2, slots);
+            }
+        }
         attron(COLOR_PAIR(pair_panel_title) | A_BOLD);
         mvaddch(inv_y, inner_x + 2, ' ');
         mvprintw(inv_y, inner_x + 3, "inventory tetris");
@@ -1570,6 +1702,13 @@ void render_action_log_box(int y, int x, int h, int w, const world_snapshot &sna
         pos += chunk;
         line++;
     }
+    bool deadlock_log_active = (current_frame - deadlock_log_frame) >= 0 && (current_frame - deadlock_log_frame) < 90;
+    if (deadlock_log_active && inner_h > 2) {
+        int msg_y = inner_y + inner_h - 2;
+        attron(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+        mvprintw(msg_y, inner_x, "DEADLOCK FIXED: arbiter forced artifact drop");
+        attroff(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
+    }
     if (drop_flash_active && inner_h > 1) {
         int msg_y = inner_y + inner_h - 1;
         attron(COLOR_PAIR(pair_artifact_solar) | A_BOLD | A_BLINK);
@@ -1592,9 +1731,16 @@ void render_kill_counter(int y, int x, int w, const world_snapshot &snap) {
     if (bar_w < 5) {
         return;
     }
-    attron(COLOR_PAIR(pair_kill_counter) | A_BOLD);
-    mvprintw(y, x, "KILLS %2d/%2d", filled, total);
-    attroff(COLOR_PAIR(pair_kill_counter) | A_BOLD);
+    bool kill_pop_active = (current_frame - kill_pop_frame) >= 0 && (current_frame - kill_pop_frame) < 6;
+    if (kill_pop_active) {
+        attron(COLOR_PAIR(pair_kill_counter) | A_BOLD | A_BLINK | A_REVERSE);
+        mvprintw(y, x, "  KILLS %2d / %2d  ★ KILL ★  ", filled, total);
+        attroff(COLOR_PAIR(pair_kill_counter) | A_BOLD | A_BLINK | A_REVERSE);
+    } else {
+        attron(COLOR_PAIR(pair_kill_counter) | A_BOLD);
+        mvprintw(y, x, "KILLS %2d/%2d", filled, total);
+        attroff(COLOR_PAIR(pair_kill_counter) | A_BOLD);
+    }
     int bx = x + 12;
     mvaddch(y, bx, '[');
     int hits = (filled * bar_w) / total;
@@ -1806,7 +1952,7 @@ void render_command_bar(int y, int term_w) {
     for (int i = 0; i < term_w; ++i) {
         mvaddch(y, i, ' ');
     }
-    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap-select [T/TAB]target [?]help [q]quit ";
+    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap-select [T/TAB]target [K]cheat [?]help [q]quit ";
     int legend_len = (int)strlen(legend);
     int start = (term_w - legend_len) / 2;
     if (start < 0) {
@@ -1886,6 +2032,7 @@ void render_help_overlay(int term_h, int term_w) {
         "8  use weapon  - hit with best weapon in inventory",
         "9  swap in     - open storage selection overlay",
         "t/tab target   - cycle focused enemy target",
+        "k  cheat dmg   - direct -50 hp on target enemy",
         "?  toggle this help",
         "q  quit (sigterm to arbiter & asp)"
     };
@@ -1992,7 +2139,18 @@ void render_frame(const world_snapshot &snap) {
         if (prev_stamina[idx] >= 0 && prev_stamina[idx] < snap.players[i].max_stamina &&
             snap.players[i].stamina >= snap.players[i].max_stamina) {
             full_stamina_flash_frame[idx] = current_frame;
+            stamina_ready_pulse_frame[i] = current_frame;
         }
+        int fill_count = 0;
+        for (int s = 0; s < game_state::inventory_slots; ++s) {
+            if (snap.players[i].inventory[s] > 0) {
+                fill_count++;
+            }
+        }
+        if (prev_player_inventory_fill[i] >= 0 && fill_count > prev_player_inventory_fill[i]) {
+            pickup_sweep_frame[i] = current_frame;
+        }
+        prev_player_inventory_fill[i] = fill_count;
         prev_hp[idx] = hp;
         prev_stamina[idx] = snap.players[i].stamina;
     }
@@ -2002,14 +2160,35 @@ void render_frame(const world_snapshot &snap) {
         }
         int idx = game_state::max_players + i;
         int hp = snap.enemies[i].hp;
+        int dead_count = snap.enemy_dead_count[i];
         if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
             hit_flash_frame[idx] = current_frame;
         }
         if (prev_hp[idx] > 0 && hp <= 0) {
             death_flash_frame[idx] = current_frame;
         }
+        if (prev_enemy_dead_count[i] >= 0 && dead_count > prev_enemy_dead_count[i]) {
+            death_flash_frame[idx] = current_frame;
+            hit_flash_frame[idx] = current_frame;
+        }
+        if (prev_enemy_display_id[i] >= 0 && snap.enemy_display_id[i] > prev_enemy_display_id[i]) {
+            enemy_spawn_flash_frame[i] = current_frame;
+        }
         prev_hp[idx] = hp;
         prev_stamina[idx] = snap.enemies[i].stamina;
+        prev_enemy_dead_count[i] = dead_count;
+        prev_enemy_display_id[i] = snap.enemy_display_id[i];
+    }
+    if (prev_total_kills >= 0 && snap.total_kills > prev_total_kills) {
+        kill_pop_frame = current_frame;
+    }
+    prev_total_kills = snap.total_kills;
+    if (!prev_ultimate_active && snap.ultimate_active) {
+        ultimate_shockwave_frame = current_frame;
+    }
+    prev_ultimate_active = snap.ultimate_active ? 1 : 0;
+    if (strstr(snap.last_event, "deadlock_break") != nullptr || strstr(snap.action_log, "deadlock") != nullptr) {
+        deadlock_log_frame = current_frame;
     }
     if (prev_dropped_weapon == 0 && snap.current_dropped_weapon != 0) {
         weapon_drop_flash_frame = current_frame;
@@ -2049,8 +2228,17 @@ void render_frame(const world_snapshot &snap) {
     render_enemy_panel(0, left_w + center_w, main_h, right_w, snap);
     render_command_bar(term_h - 1, term_w);
     if (snap.ultimate_active) {
-        int pulse_pair = ((current_frame / 8) % 2 == 0) ? pair_artifact_solar : pair_artifact_lunar;
-        draw_double_box_at(0, 0, term_h, term_w, pulse_pair, A_BOLD);
+        int pulse_attr = ((current_frame / 8) % 2 == 0) ? (A_BOLD | A_BLINK) : A_BOLD;
+        draw_double_box_at(0, 0, term_h, term_w, pair_artifact_solar, pulse_attr);
+    }
+    if (current_frame == ultimate_shockwave_frame) {
+        attron(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
+        for (int yy = 0; yy < term_h; ++yy) {
+            for (int xx = 0; xx < term_w; ++xx) {
+                mvaddch(yy, xx, ' ');
+            }
+        }
+        attroff(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
     }
 
     if (snap.outcome == game_state::outcome_win) {
@@ -2620,6 +2808,7 @@ int main(int argc, char **argv) {
         cleanup_resources();
         return 1;
     }
+    initialize_animation_state();
     if (!spawn_threads()) {
         cleanup_tui_once();
         cleanup_resources();
