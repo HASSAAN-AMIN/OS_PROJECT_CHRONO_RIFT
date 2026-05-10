@@ -24,6 +24,7 @@ const char *shared_memory_name = "/chrono_rift_game_state";
 const useconds_t frame_sleep_us = 1000000 / 60;
 const useconds_t input_sleep_us = 16000;
 const useconds_t player_idle_sleep_us = 60000;
+const int pending_target_auto = -999999;
 
 const int pair_default = 1;
 const int pair_border_normal = 2;
@@ -110,6 +111,12 @@ pthread_t player_threads[game_state::max_players];
 int player_thread_ids[game_state::max_players];
 int chosen_party_size = 0;
 int show_help_overlay = 0;
+int show_swap_overlay = 0;
+int swap_overlay_player_id = -1;
+int swap_overlay_option_count = 0;
+int swap_overlay_weapon_ids[game_state::weapon_id_max] = {0};
+char swap_overlay_option_keys[game_state::weapon_id_max] = {0};
+int pending_swap_weapon_id[game_state::max_players] = {-1, -1, -1, -1};
 unsigned long render_frame_counter = 0;
 time_t last_event_time = 0;
 char last_event_label[64] = {0};
@@ -595,7 +602,7 @@ int pending_target_for_action_locked(int action) {
     return -1;
 }
 
-void submit_player_action_request(int player_id, int action) {
+void submit_player_action_request(int player_id, int action, int forced_target = pending_target_auto) {
     if (!lock_memory()) {
         return;
     }
@@ -611,7 +618,10 @@ void submit_player_action_request(int player_id, int action) {
         unlock_memory();
         return;
     }
-    int target = pending_target_for_action_locked(action);
+    int target = forced_target;
+    if (target == pending_target_auto) {
+        target = pending_target_for_action_locked(action);
+    }
     shared_state->player_pending_action[player_id] = action;
     shared_state->player_pending_target[player_id] = target;
     snprintf(shared_state->last_event, sizeof(shared_state->last_event), "p%d_action_%d", player_id + 1, action);
@@ -643,7 +653,82 @@ void perform_pickup(int player_id) {
 }
 
 void perform_swap_in(int player_id) {
-    submit_player_action_request(player_id, game_state::action_swap_in);
+    int chosen_weapon = pending_swap_weapon_id[player_id];
+    if (chosen_weapon <= 0) {
+        return;
+    }
+    submit_player_action_request(player_id, game_state::action_swap_in, chosen_weapon);
+    pending_swap_weapon_id[player_id] = -1;
+}
+
+void clear_swap_overlay_state() {
+    show_swap_overlay = 0;
+    swap_overlay_player_id = -1;
+    swap_overlay_option_count = 0;
+    for (int i = 0; i < game_state::weapon_id_max; ++i) {
+        swap_overlay_weapon_ids[i] = 0;
+        swap_overlay_option_keys[i] = 0;
+    }
+}
+
+void open_swap_overlay_for_player(int player_id) {
+    if (!lock_memory()) {
+        return;
+    }
+    if (player_id < 0 || player_id >= game_state::max_players || player_id >= shared_state->active_player_count) {
+        unlock_memory();
+        return;
+    }
+    if (shared_state->player_stamina[player_id] < game_state::player_max_stamina) {
+        unlock_memory();
+        return;
+    }
+    bool seen[game_state::weapon_id_max + 1] = {false};
+    int count = 0;
+    for (int i = 0; i < game_state::inventory_slots && count < game_state::weapon_id_max; ++i) {
+        int weapon_id = shared_state->long_term_storage[player_id][i];
+        if (weapon_id <= 0 || weapon_id > game_state::weapon_id_max) {
+            continue;
+        }
+        if (seen[weapon_id]) {
+            continue;
+        }
+        seen[weapon_id] = true;
+        swap_overlay_weapon_ids[count] = weapon_id;
+        swap_overlay_option_keys[count] = static_cast<char>('a' + count);
+        count++;
+    }
+    unlock_memory();
+    pending_swap_weapon_id[player_id] = -1;
+    swap_overlay_option_count = count;
+    swap_overlay_player_id = player_id;
+    show_swap_overlay = (count > 0) ? 1 : 0;
+    if (show_swap_overlay) {
+        show_help_overlay = 0;
+    }
+}
+
+bool handle_swap_overlay_key_for_player(int player_id, int ch) {
+    if (!show_swap_overlay || player_id != swap_overlay_player_id) {
+        return false;
+    }
+    if (ch == 27 || ch == '0' || ch == 'x' || ch == 'X') {
+        clear_swap_overlay_state();
+        return true;
+    }
+    int normalized = ch;
+    if (normalized >= 'A' && normalized <= 'Z') {
+        normalized = normalized - 'A' + 'a';
+    }
+    for (int i = 0; i < swap_overlay_option_count; ++i) {
+        if (normalized == swap_overlay_option_keys[i]) {
+            pending_swap_weapon_id[player_id] = swap_overlay_weapon_ids[i];
+            clear_swap_overlay_state();
+            perform_swap_in(player_id);
+            return true;
+        }
+    }
+    return true;
 }
 
 void perform_ultimate(int player_id) {
@@ -667,6 +752,9 @@ void send_quit_signals() {
 }
 
 void handle_key_for_player(int player_id, int ch) {
+    if (handle_swap_overlay_key_for_player(player_id, ch)) {
+        return;
+    }
     switch (ch) {
         case '1': perform_strike(player_id); break;
         case '2': perform_exhaust(player_id); break;
@@ -676,7 +764,7 @@ void handle_key_for_player(int player_id, int ch) {
         case '6': perform_ultimate(player_id); break;
         case '7': break;
         case '8': perform_use_weapon(player_id); break;
-        case '9': perform_swap_in(player_id); break;
+        case '9': open_swap_overlay_for_player(player_id); break;
         default: break;
     }
 }
@@ -1595,7 +1683,7 @@ void render_command_bar(int y, int term_w) {
     for (int i = 0; i < term_w; ++i) {
         mvaddch(y, i, ' ');
     }
-    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap [?]help [q]quit ";
+    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap-select [?]help [q]quit ";
     int legend_len = (int)strlen(legend);
     int start = (term_w - legend_len) / 2;
     if (start < 0) {
@@ -1671,9 +1759,9 @@ void render_help_overlay(int term_h, int term_w) {
         "4  skip        - drop stamina to 50%",
         "5  pickup      - take ground drop",
         "6  ultimate    - need solar core + lunar blade",
-        "7  stun        - hit + freeze enemy 3s",
+        "7  reserved    - no player action",
         "8  use weapon  - hit with best weapon in inventory",
-        "9  swap in     - bring weapon back from storage",
+        "9  swap in     - open storage selection overlay",
         "?  toggle this help",
         "q  quit (sigterm to arbiter & asp)"
     };
@@ -1683,6 +1771,75 @@ void render_help_overlay(int term_h, int term_w) {
         mvprintw(box_y + 3 + i, box_x + 3, "%s", lines[i]);
     }
     attroff(COLOR_PAIR(pair_help));
+}
+
+void render_swap_overlay(int term_h, int term_w, const world_snapshot &snap) {
+    if (!show_swap_overlay || swap_overlay_player_id < 0 || swap_overlay_player_id >= game_state::max_players) {
+        return;
+    }
+    int box_w = 74;
+    int box_h = 12 + swap_overlay_option_count;
+    if (box_w > term_w - 4) {
+        box_w = term_w - 4;
+    }
+    if (box_h > term_h - 4) {
+        box_h = term_h - 4;
+    }
+    int box_y = (term_h - box_h) / 2;
+    int box_x = (term_w - box_w) / 2;
+    for (int yy = box_y; yy < box_y + box_h; ++yy) {
+        attron(COLOR_PAIR(pair_help));
+        for (int xx = box_x; xx < box_x + box_w; ++xx) {
+            mvaddch(yy, xx, ' ');
+        }
+        attroff(COLOR_PAIR(pair_help));
+    }
+    draw_double_box_at(box_y, box_x, box_h, box_w, pair_help, A_BOLD);
+    attron(COLOR_PAIR(pair_help) | A_BOLD | A_REVERSE);
+    mvprintw(box_y + 1, box_x + 2, "  swap in selection - player %d  ", swap_overlay_player_id + 1);
+    attroff(COLOR_PAIR(pair_help) | A_BOLD | A_REVERSE);
+    attron(COLOR_PAIR(pair_help) | A_BOLD);
+    mvprintw(box_y + 3, box_x + 3, "press listed letter to select a stored weapon");
+    mvprintw(box_y + 4, box_x + 3, "press x / 0 / esc to cancel");
+    attroff(COLOR_PAIR(pair_help) | A_BOLD);
+
+    int row = box_y + 6;
+    if (swap_overlay_option_count <= 0) {
+        attron(COLOR_PAIR(pair_status_warn) | A_BOLD);
+        mvprintw(row, box_x + 3, "no weapons found in long-term storage");
+        attroff(COLOR_PAIR(pair_status_warn) | A_BOLD);
+        return;
+    }
+
+    int storage_count = 0;
+    for (int s = 0; s < game_state::inventory_slots; ++s) {
+        if (snap.players[swap_overlay_player_id].storage[s] > 0) {
+            storage_count++;
+        }
+    }
+    attron(COLOR_PAIR(pair_help));
+    mvprintw(row, box_x + 3, "storage occupied slots: %d / %d", storage_count, game_state::storage_slots);
+    attroff(COLOR_PAIR(pair_help));
+    row += 2;
+
+    for (int i = 0; i < swap_overlay_option_count && row < box_y + box_h - 1; ++i) {
+        int weapon_id = swap_overlay_weapon_ids[i];
+        char option_key = swap_overlay_option_keys[i];
+        int dmg = weapon_damage_value(weapon_id);
+        int slots = weapon_slot_size(weapon_id);
+        int pair = weapon_color_pair_for(weapon_id);
+        attron(COLOR_PAIR(pair) | A_BOLD);
+        mvprintw(
+            row, box_x + 3,
+            "[%c] %-18s  dmg:%-3d  slots:%-2d",
+            option_key,
+            weapon_name(weapon_id),
+            dmg,
+            slots
+        );
+        attroff(COLOR_PAIR(pair) | A_BOLD);
+        row++;
+    }
 }
 
 void render_frame(const world_snapshot &snap) {
@@ -1743,6 +1900,8 @@ void render_frame(const world_snapshot &snap) {
         render_overlay(term_h, term_w, "  D E F E A T  ", line1, line2, pair_overlay_lose);
     } else if (snap.outcome == game_state::outcome_quit) {
         render_overlay(term_h, term_w, "  S H U T D O W N  ", "session terminated", "thanks for playing chrono rift", pair_overlay_quit);
+    } else if (show_swap_overlay) {
+        render_swap_overlay(term_h, term_w, snap);
     } else if (show_help_overlay) {
         render_help_overlay(term_h, term_w);
     }
@@ -1801,7 +1960,7 @@ void *input_dispatcher_loop(void *) {
                 }
                 break;
             }
-            if (ch == '?' || ch == 'h' || ch == 'H') {
+            if ((ch == '?' || ch == 'h' || ch == 'H') && !show_swap_overlay) {
                 show_help_overlay = !show_help_overlay;
                 continue;
             }
@@ -1810,6 +1969,9 @@ void *input_dispatcher_loop(void *) {
                 continue;
             }
             int active = read_active_player_index();
+            if (show_swap_overlay && active != swap_overlay_player_id) {
+                clear_swap_overlay_state();
+            }
             if (active >= 0 && active < game_state::max_players) {
                 pthread_mutex_lock(&player_buffers[active].lock);
                 player_buffers[active].pending_key = ch;

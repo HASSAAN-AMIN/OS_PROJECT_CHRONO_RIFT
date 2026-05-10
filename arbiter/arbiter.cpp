@@ -505,12 +505,10 @@ int find_best_weapon_locked(int player_id) {
     return best_id;
 }
 
-int swap_in_from_storage_locked(int player_id) {
+int swap_in_from_storage_locked(int player_id, int chosen_weapon) {
     int *storage = shared_state->long_term_storage[player_id];
-    int chosen_weapon = 0;
     int chosen_start = -1;
     int chosen_size = 0;
-    int chosen_dmg = 0;
     int i = 0;
     while (i < game_state::inventory_slots) {
         int w = storage[i];
@@ -522,17 +520,15 @@ int swap_in_from_storage_locked(int player_id) {
         if (size <= 0) {
             size = 1;
         }
-        int dmg = weapon_damage_value(w);
-        if (dmg > chosen_dmg) {
-            chosen_dmg = dmg;
-            chosen_weapon = w;
+        if (w == chosen_weapon) {
             chosen_start = i;
             chosen_size = size;
+            break;
         }
         i += size;
     }
-    if (chosen_weapon == 0) {
-        return 0;
+    if (chosen_weapon == 0 || chosen_start < 0 || chosen_size <= 0) {
+        return -1;
     }
     zero_weapon_run(storage, chosen_start, chosen_size);
     int placed = allocate_weapon_iterative_locked(player_id, chosen_weapon);
@@ -1023,8 +1019,8 @@ void execute_player_action_locked(int player_id, int action, int target, time_t 
             shared_state->player_stamina[player_id] = 0;
         }
     } else if (action == game_state::action_swap_in) {
-        int swapped = swap_in_from_storage_locked(player_id);
-        if (swapped != -1) {
+        int swapped = swap_in_from_storage_locked(player_id, target);
+        if (swapped > 0) {
             shared_state->player_stamina[player_id] = 0;
         }
     }
