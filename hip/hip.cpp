@@ -589,7 +589,7 @@ bool require_full_stamina_locked(int player_id) {
 
 int pending_target_for_action_locked(int action) {
     if (action == game_state::action_strike || action == game_state::action_exhaust ||
-        action == game_state::action_stun || action == game_state::action_use_weapon) {
+        action == game_state::action_use_weapon) {
         return next_target_enemy_locked();
     }
     return -1;
@@ -650,10 +650,6 @@ void perform_ultimate(int player_id) {
     submit_player_action_request(player_id, game_state::action_ultimate);
 }
 
-void perform_stun(int player_id) {
-    submit_player_action_request(player_id, game_state::action_stun);
-}
-
 void send_quit_signals() {
     pid_t arbiter_pid_local = 0;
     pid_t asp_pid_local = 0;
@@ -678,7 +674,7 @@ void handle_key_for_player(int player_id, int ch) {
         case '4': perform_skip(player_id); break;
         case '5': perform_pickup(player_id); break;
         case '6': perform_ultimate(player_id); break;
-        case '7': perform_stun(player_id); break;
+        case '7': break;
         case '8': perform_use_weapon(player_id); break;
         case '9': perform_swap_in(player_id); break;
         default: break;
@@ -1599,7 +1595,7 @@ void render_command_bar(int y, int term_w) {
     for (int i = 0; i < term_w; ++i) {
         mvaddch(y, i, ' ');
     }
-    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [7]stun [8]use [9]swap [?]help [q]quit ";
+    const char *legend = " [1]strike [2]exhaust [3]heal [4]skip [5]pickup [6]ult [8]use [9]swap [?]help [q]quit ";
     int legend_len = (int)strlen(legend);
     int start = (term_w - legend_len) / 2;
     if (start < 0) {

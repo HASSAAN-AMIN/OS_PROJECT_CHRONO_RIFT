@@ -941,7 +941,7 @@ void execute_player_action_locked(int player_id, int action, int target, time_t 
     }
     int enemy_id = -1;
     if (action == game_state::action_strike || action == game_state::action_exhaust ||
-        action == game_state::action_stun || action == game_state::action_use_weapon) {
+        action == game_state::action_use_weapon) {
         enemy_id = resolve_enemy_target_locked(target);
         if (enemy_id < 0) {
             return;
@@ -1009,16 +1009,6 @@ void execute_player_action_locked(int player_id, int action, int target, time_t 
             ultimate_end_time = now + 10;
             ultimate_triggered = 1;
         }
-    } else if (action == game_state::action_stun) {
-        int dmg = shared_state->player_damage[player_id];
-        int next_hp = shared_state->enemy_hp[enemy_id] - dmg;
-        if (next_hp < 0) {
-            next_hp = 0;
-        }
-        shared_state->enemy_hp[enemy_id] = next_hp;
-        shared_state->stun_end_time[enemy_id] = now + 3;
-        shared_state->player_stamina[player_id] = 0;
-        stun_triggered = 1;
     } else if (action == game_state::action_use_weapon) {
         int weapon_id = find_best_weapon_locked(player_id);
         if (weapon_id != 0) {
