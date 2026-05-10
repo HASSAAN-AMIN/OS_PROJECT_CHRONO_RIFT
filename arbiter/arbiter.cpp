@@ -1046,7 +1046,7 @@ void process_player_actions_locked(time_t now) {
     }
 }
 
-bool tick_stamina_progression() {
+bool tick_stamina_progression(bool apply_stamina_tick) {
     if (!lock_state()) {
         return false;
     }
@@ -1076,8 +1076,10 @@ bool tick_stamina_progression() {
         snprintf(shared_state->last_event, sizeof(shared_state->last_event), "deadlock_break");
     }
     process_player_actions_locked(now);
-    update_player_stamina();
-    update_enemy_stamina();
+    if (apply_stamina_tick) {
+        update_player_stamina();
+        update_enemy_stamina();
+    }
     apply_enemy_turn_timeouts_locked(now);
     track_enemy_deaths_locked();
     reset_enemy_turn_timeout_locked();
@@ -1092,12 +1094,19 @@ bool tick_stamina_progression() {
 }
 
 void run_stamina_loop() {
+    static int tick_count = 0;
     while (arbiter_running) {
-        sleep(1);
+        while (usleep(100000) == -1 && errno == EINTR) {
+            if (!arbiter_running) {
+                break;
+            }
+        }
         if (!arbiter_running) {
             break;
         }
-        if (!tick_stamina_progression()) {
+        tick_count++;
+        bool apply_stamina_tick = (tick_count % 10 == 0);
+        if (!tick_stamina_progression(apply_stamina_tick)) {
             break;
         }
     }
