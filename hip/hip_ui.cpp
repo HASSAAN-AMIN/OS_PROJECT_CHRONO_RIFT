@@ -261,9 +261,14 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     }
     bool death_flash_active = death_flash_frame[entity_index] >= 0 &&
                               (current_frame - death_flash_frame[entity_index]) < death_flash_duration;
-    bool shake_active = (current_frame - hit_flash_frame[entity_index]) < shake_duration;
+    bool shake_active = entity_hit_frames[entity_index] > 0;
     if (shake_active) {
-        int offset = (current_frame % 2 == 0) ? 1 : -1;
+        int offset = 0;
+        if (entity_hit_frames[entity_index] > 20) {
+            offset = (current_frame % 2 == 0) ? 2 : -2;
+        } else if (entity_hit_frames[entity_index] > 8) {
+            offset = (current_frame % 2 == 0) ? 1 : -1;
+        }
         int max_x = COLS - w - 1;
         if (max_x < 0) {
             max_x = 0;
@@ -284,15 +289,6 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
         body_pair = pair_hp_critical;
     }
     paint_rect(y + 1, x + 1, h - 2, w - 2, body_pair);
-    if (hit_flash_active) {
-        attron(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
-        for (int yy = y + 1; yy < y + h - 1; ++yy) {
-            for (int xx = x + 1; xx < x + w - 1; ++xx) {
-                mvaddch(yy, xx, ' ');
-            }
-        }
-        attroff(COLOR_PAIR(pair_default) | A_REVERSE | A_BOLD);
-    }
     if (death_flash_active) {
         attron(COLOR_PAIR(pair_hp_critical) | A_REVERSE | A_BOLD);
         for (int yy = y + 1; yy < y + h - 1; ++yy) {
@@ -305,8 +301,8 @@ void render_entity(int y, int x, int h, int w, const char *title, const entity_s
     int border_pair = pair_border_normal;
     int border_extra = 0;
     if (hit_flash_active) {
-        border_pair = pair_hp_low;
-        border_extra = A_BOLD;
+        border_pair = pair_hp_critical;
+        border_extra = A_BOLD | A_BLINK;
     }
     if (death_flash_active) {
         border_pair = pair_hp_critical;
@@ -996,6 +992,22 @@ void render_arena_panel(int y, int x, int h, int w, const world_snapshot &snap) 
     }
 }
 
+void render_falling_stars_overlay(int term_h, int term_w) {
+    int stars = 36;
+    for (int i = 0; i < stars; ++i) {
+        int x = (int)((current_frame * 3 + i * 29) % term_w);
+        int y = (int)((current_frame + i * 17) % term_h);
+        if (y >= term_h - 1) {
+            continue;
+        }
+        int pair = pair_border_v1 + (i % 7);
+        chtype ch = ((current_frame + i) % 4 == 0) ? '*' : '.';
+        attron(COLOR_PAIR(pair) | A_DIM);
+        mvaddch(y, x, ch);
+        attroff(COLOR_PAIR(pair) | A_DIM);
+    }
+}
+
 void render_action_banner_overlay(int y, int x, int h, int w) {
     if (action_banner_frames <= 0) {
         return;
@@ -1018,6 +1030,12 @@ void render_action_banner_overlay(int y, int x, int h, int w) {
     }
     int box_y = y + (h - box_h) / 2;
     int box_x = x + (w - box_w) / 2;
+    int wave = action_banner_frames % 6;
+    if (wave == 0 || wave == 1) {
+        box_x += 1;
+    } else if (wave == 3 || wave == 4) {
+        box_x -= 1;
+    }
     for (int yy = box_y; yy < box_y + box_h; ++yy) {
         attron(COLOR_PAIR(action_banner_pair) | A_REVERSE | A_BOLD);
         for (int xx = box_x; xx < box_x + box_w; ++xx) {
@@ -1328,6 +1346,7 @@ void render_frame(const world_snapshot &snap) {
     paint_rect(0, left_w, main_h, center_w, pair_bg_arena);
     paint_rect(0, left_w + center_w, main_h, right_w, pair_bg_enemy);
     paint_rect(term_h - 1, 0, 1, term_w, pair_bg_footer);
+    render_falling_stars_overlay(main_h, term_w);
     render_player_panel(0, 0, main_h, left_w, snap);
     render_arena_panel(0, left_w, main_h, center_w, snap);
     render_enemy_panel(0, left_w + center_w, main_h, right_w, snap);

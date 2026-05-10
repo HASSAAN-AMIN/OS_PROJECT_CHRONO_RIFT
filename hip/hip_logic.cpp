@@ -1209,16 +1209,6 @@ void join_threads() {
 
 void *outcome_watch_loop(void *) {
     while (running) {
-        int o = read_outcome();
-        if (o != game_state::outcome_ongoing) {
-            running = 0;
-            for (int i = 0; i < game_state::max_players; ++i) {
-                pthread_mutex_lock(&player_buffers[i].lock);
-                pthread_cond_broadcast(&player_buffers[i].cv);
-                pthread_mutex_unlock(&player_buffers[i].lock);
-            }
-            break;
-        }
         interruptible_usleep(500000);
     }
     return nullptr;
