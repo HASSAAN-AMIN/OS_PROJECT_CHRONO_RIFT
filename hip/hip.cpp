@@ -1882,17 +1882,19 @@ bool register_signals() {
 }
 
 // =============================================================================
-// DARK NEON THEME — all color pair definitions live here.
+// DARK COLORFUL THEME — harmonious palette, no pink/magenta.
 //
-// Custom color indices layout (when can_change_color()):
-//   16-26  : panel background colors   (very dark)
-//   27-31  : banner strip colors       (vivid saturated)
-//   32-41  : foreground / text colors  (neon / vibrant)
+// Custom color indices (when can_change_color()):
+//   16-26  : panel background colors  (very dark)
+//   27-31  : unused banner bg slots   (kept for index alignment)
+//   32-40  : foreground text colors   (vibrant but tasteful)
 //
-// Fallback (no custom colors): uses the closest standard ncurses color.
+// Enemy timeline:  unspawned = slate-blue  |  alive = sky-blue  |  dead = RED
+// Border variants: sky → teal → green → amber → indigo → orange → gold
+// No pink or magenta anywhere.
 // =============================================================================
 void init_color_pairs() {
-    // ---- background indices (dark panels) ------------------------------------
+    // ---- background indices -------------------------------------------------
     int c_canvas        = COLOR_BLACK;
     int c_player_bg     = COLOR_BLUE;
     int c_arena_bg      = COLOR_BLACK;
@@ -1904,26 +1906,20 @@ void init_color_pairs() {
     int c_log_bg        = COLOR_BLACK;
     int c_status_bg     = COLOR_BLACK;
     int c_artifact_bg   = COLOR_BLACK;
-    // ---- banner strip indices -----------------------------------------------
-    int c_banner_1      = COLOR_RED;
-    int c_banner_2      = COLOR_BLUE;
-    int c_banner_3      = COLOR_GREEN;
-    int c_banner_4      = COLOR_CYAN;
-    int c_banner_5      = COLOR_MAGENTA;
-    // ---- neon foreground / text indices (fallback = standard colors) ---------
-    int c_neon_yellow   = COLOR_YELLOW;
-    int c_neon_orange   = COLOR_RED;
-    int c_neon_lime     = COLOR_GREEN;
-    int c_neon_sky      = COLOR_CYAN;
-    int c_neon_pink     = COLOR_MAGENTA;
-    int c_neon_gold     = COLOR_YELLOW;
-    int c_neon_lavender = COLOR_MAGENTA;
-    int c_neon_mint     = COLOR_GREEN;
-    int c_neon_red      = COLOR_RED;
-    int c_neon_cyan     = COLOR_CYAN;
+
+    // ---- foreground / text color indices (fallback = nearest std color) -----
+    int c_sky    = COLOR_CYAN;    // sky blue   — alive enemies, player turn, stamina
+    int c_green  = COLOR_GREEN;   // soft green — HP high, status ok, kills
+    int c_amber  = COLOR_YELLOW;  // warm amber — HP med, panel titles
+    int c_orange = COLOR_YELLOW;  // orange     — HP low, status warn, banner row 3
+    int c_red    = COLOR_RED;     // clear red  — HP crit, dead entities
+    int c_teal   = COLOR_CYAN;    // teal       — arena, stamina full, log title
+    int c_indigo = COLOR_BLUE;    // soft indigo— enemy panel, eclipse relic, lunar
+    int c_gold   = COLOR_YELLOW;  // gold       — solar, banner, kill counter
+    int c_slate  = COLOR_WHITE;   // blue-gray  — unspawned enemies, iron weapon
 
     if (can_change_color()) {
-        // -- background color slots -------------------------------------------
+        // background slots
         c_canvas        = 16;
         c_player_bg     = 17;
         c_arena_bg      = 18;
@@ -1935,157 +1931,147 @@ void init_color_pairs() {
         c_log_bg        = 24;
         c_status_bg     = 25;
         c_artifact_bg   = 26;
-        // -- banner color slots -----------------------------------------------
-        c_banner_1      = 27;
-        c_banner_2      = 28;
-        c_banner_3      = 29;
-        c_banner_4      = 30;
-        c_banner_5      = 31;
-        // -- neon text color slots --------------------------------------------
-        c_neon_yellow   = 32;
-        c_neon_orange   = 33;
-        c_neon_lime     = 34;
-        c_neon_sky      = 35;
-        c_neon_pink     = 36;
-        c_neon_gold     = 37;
-        c_neon_lavender = 38;
-        c_neon_mint     = 39;
-        c_neon_red      = 40;
-        c_neon_cyan     = 41;
+        // foreground slots
+        c_sky    = 32;
+        c_green  = 33;
+        c_amber  = 34;
+        c_orange = 35;
+        c_red    = 36;
+        c_teal   = 37;
+        c_indigo = 38;
+        c_gold   = 39;
+        c_slate  = 40;
 
-        // ---- very dark panel backgrounds ------------------------------------
-        // values are in ncurses units: 0-1000
-        init_color(c_canvas,          22,  22,  48);  // near-black slate-blue
-        init_color(c_player_bg,        5,  12,  80);  // deep navy
-        init_color(c_arena_bg,         4,  38,  42);  // deep teal-black
-        init_color(c_enemy_bg,        32,   4,  68);  // deep violet-black
-        init_color(c_footer_bg,        4,   4,  15);  // almost black
-        init_color(c_player_box_bg,    4,   8,  55);  // dark navy interior
-        init_color(c_enemy_box_bg,    20,   3,  40);  // dark purple interior
-        init_color(c_timeline_bg,      4,   3,  32);  // dark indigo
-        init_color(c_log_bg,           3,  20,  24);  // dark teal-black
-        init_color(c_status_bg,        4,   8,  26);  // dark midnight blue
-        init_color(c_artifact_bg,      2,   5,  18);  // near-black navy
+        // ---- very dark panel backgrounds (ncurses 0-1000 scale) -------------
+        init_color(c_canvas,        18,  20,  32);  // dark blue-black
+        init_color(c_player_bg,      8,  14,  52);  // deep navy
+        init_color(c_arena_bg,       6,  28,  32);  // deep teal-black
+        init_color(c_enemy_bg,      22,   8,  42);  // deep violet-black
+        init_color(c_footer_bg,      4,   4,  12);  // near black
+        init_color(c_player_box_bg,  4,  10,  40);  // dark navy interior
+        init_color(c_enemy_box_bg,  16,   5,  32);  // dark purple interior
+        init_color(c_timeline_bg,    4,   4,  26);  // dark indigo
+        init_color(c_log_bg,         4,  18,  22);  // dark teal
+        init_color(c_status_bg,      4,   8,  24);  // dark midnight blue
+        init_color(c_artifact_bg,    2,   5,  16);  // near-black navy
 
-        // ---- vivid banner strip colors (not used as bg anymore, kept for fallback)
-        init_color(c_banner_1,       950,  80,  80);  // vivid crimson
-        init_color(c_banner_2,        80, 240, 980);  // vivid royal blue
-        init_color(c_banner_3,        60, 900, 160);  // vivid emerald
-        init_color(c_banner_4,        20, 780, 960);  // vivid sky cyan
-        init_color(c_banner_5,       750,  20, 980);  // vivid purple
-
-        // ---- neon / vibrant text colors (pushed to maximum saturation) ------
-        init_color(c_neon_yellow,   1000, 980,   0);  // electric yellow
-        init_color(c_neon_orange,   1000, 380,   0);  // neon orange
-        init_color(c_neon_lime,      100,1000,   0);  // pure neon lime
-        init_color(c_neon_sky,         0, 680,1000);  // sky blue
-        init_color(c_neon_pink,     1000,   0, 520);  // hot pink / magenta
-        init_color(c_neon_gold,     1000, 860,   0);  // gold
-        init_color(c_neon_lavender,  860, 280,1000);  // neon lavender
-        init_color(c_neon_mint,        0,1000, 620);  // pure mint
-        init_color(c_neon_red,      1000,   0,  60);  // pure neon red
-        init_color(c_neon_cyan,        0,1000,1000);  // pure neon cyan
+        // ---- foreground palette — vibrant but not garish --------------------
+        // Inspired by a good dark IDE theme (sky, green, amber, orange, red, teal…)
+        init_color(c_sky,    310, 760, 980);  // #4FC3F7  sky blue
+        init_color(c_green,  490, 800, 510);  // #81CC83  soft green
+        init_color(c_amber, 1000, 720, 180);  // #FFB82E  warm amber
+        init_color(c_orange,1000, 560,  60);  // #FF8F0F  orange
+        init_color(c_red,    900, 270, 250);  // #E64540  clear red
+        init_color(c_teal,   200, 714, 694);  // #33B6B1  teal
+        init_color(c_indigo, 580, 490, 870);  // #947DDE  soft indigo
+        init_color(c_gold,  1000, 840, 100);  // #FFD619  gold
+        init_color(c_slate,  480, 580, 660);  // #7B94A8  blue-gray slate
     }
 
     // ---- color pair definitions ---------------------------------------------
+
     // General text
-    init_pair(pair_default,           COLOR_WHITE,     -1);
+    init_pair(pair_default,           COLOR_WHITE,    -1);
 
-    // Borders — 7 rotating variants give rainbow-edge effect
-    init_pair(pair_border_normal,     c_neon_cyan,     -1);
-    init_pair(pair_border_active,     c_neon_yellow,   -1);  // active turn: gold
-    init_pair(pair_border_dead,       c_neon_pink,     -1);  // dead: hot pink
+    // Borders
+    //   normal  = slate  (unspawned enemy cells, idle panel edges)
+    //   active  = sky    (alive enemies in timeline, player whose turn it is)
+    //   dead    = red    (eliminated entities)
+    init_pair(pair_border_normal,     c_slate,        -1);
+    init_pair(pair_border_active,     c_sky,          -1);
+    init_pair(pair_border_dead,       c_red,          -1);
 
-    // HP bar gradient: lime → yellow → orange → red
-    init_pair(pair_hp_high,           c_neon_lime,     -1);
-    init_pair(pair_hp_med,            c_neon_yellow,   -1);
-    init_pair(pair_hp_low,            c_neon_orange,   -1);
-    init_pair(pair_hp_critical,       c_neon_red,      -1);
+    // HP bar gradient: green → amber → orange → red
+    init_pair(pair_hp_high,           c_green,        -1);
+    init_pair(pair_hp_med,            c_amber,        -1);
+    init_pair(pair_hp_low,            c_orange,       -1);
+    init_pair(pair_hp_critical,       c_red,          -1);
 
-    // Stamina bars
-    init_pair(pair_stamina,           c_neon_sky,      -1);
-    init_pair(pair_stamina_full,      c_neon_cyan,     -1);
+    // Stamina
+    init_pair(pair_stamina,           c_teal,         -1);
+    init_pair(pair_stamina_full,      c_sky,          -1);
 
-    // Log + status indicators
-    init_pair(pair_log,               COLOR_WHITE,     -1);
-    init_pair(pair_status_ok,         c_neon_lime,     -1);
-    init_pair(pair_status_warn,       c_neon_orange,   -1);
+    // Log + status
+    init_pair(pair_log,               COLOR_WHITE,    -1);
+    init_pair(pair_status_ok,         c_green,        -1);
+    init_pair(pair_status_warn,       c_orange,       -1);
 
-    // Artifact colors
-    init_pair(pair_artifact_solar,    c_neon_gold,     -1);
-    init_pair(pair_artifact_lunar,    c_neon_sky,      -1);
-    init_pair(pair_artifact_eclipse,  c_neon_lavender, -1);
-    init_pair(pair_artifact_ground,   COLOR_WHITE,     -1);
+    // Artifacts
+    init_pair(pair_artifact_solar,    c_gold,         -1);
+    init_pair(pair_artifact_lunar,    c_sky,          -1);
+    init_pair(pair_artifact_eclipse,  c_indigo,       -1);
+    init_pair(pair_artifact_ground,   COLOR_WHITE,    -1);
 
-    // Command bar (footer)
-    init_pair(pair_command_bar,       COLOR_WHITE,     c_footer_bg);
+    // Footer command bar
+    init_pair(pair_command_bar,       COLOR_WHITE,    c_footer_bg);
 
-    // Inventory slots — each weapon has a distinct vivid color
-    init_pair(pair_inv_empty,         COLOR_BLACK,     COLOR_BLACK);
-    init_pair(pair_inv_splinter,      c_neon_lime,     COLOR_BLACK);  // S - lime
-    init_pair(pair_inv_venom,         c_neon_pink,     COLOR_BLACK);  // V - hot pink
-    init_pair(pair_inv_obsidian,      COLOR_WHITE,     COLOR_BLACK);  // A - white
-    init_pair(pair_inv_frost,         c_neon_sky,      COLOR_BLACK);  // F - sky blue
-    init_pair(pair_inv_thunder,       c_neon_yellow,   COLOR_BLACK);  // T - electric yellow
-    init_pair(pair_inv_iron,          c_neon_cyan,     COLOR_BLACK);  // I - cyan
-    init_pair(pair_inv_solar,         c_neon_gold,     COLOR_BLACK);  // O - gold
-    init_pair(pair_inv_lunar,         c_neon_lavender, COLOR_BLACK);  // L - lavender
-    init_pair(pair_inv_eclipse,       c_neon_orange,   COLOR_BLACK);  // E - orange
+    // Inventory weapons — each a distinct tasteful color (NO pink/magenta)
+    init_pair(pair_inv_empty,         COLOR_BLACK,    COLOR_BLACK);
+    init_pair(pair_inv_splinter,      c_green,        COLOR_BLACK);  // S - green
+    init_pair(pair_inv_venom,         c_teal,         COLOR_BLACK);  // V - teal
+    init_pair(pair_inv_obsidian,      c_slate,        COLOR_BLACK);  // A - slate
+    init_pair(pair_inv_frost,         c_sky,          COLOR_BLACK);  // F - sky
+    init_pair(pair_inv_thunder,       c_amber,        COLOR_BLACK);  // T - amber
+    init_pair(pair_inv_iron,          COLOR_WHITE,    COLOR_BLACK);  // I - white
+    init_pair(pair_inv_solar,         c_gold,         COLOR_BLACK);  // O - gold
+    init_pair(pair_inv_lunar,         c_indigo,       COLOR_BLACK);  // L - indigo
+    init_pair(pair_inv_eclipse,       c_orange,       COLOR_BLACK);  // E - orange
 
-    // Panel title labels
-    init_pair(pair_panel_title,       c_neon_pink,     -1);
-    init_pair(pair_arena_title,       c_neon_mint,     -1);
-    init_pair(pair_banner,            c_neon_gold,     -1);
+    // Panel title text
+    init_pair(pair_panel_title,       c_amber,        -1);
+    init_pair(pair_arena_title,       c_teal,         -1);
+    init_pair(pair_banner,            c_gold,         -1);
 
     // Kill counter
-    init_pair(pair_kill_counter,      c_neon_lime,     -1);
+    init_pair(pair_kill_counter,      c_green,        -1);
 
     // End-game overlays
-    init_pair(pair_overlay_win,       c_neon_lime,     COLOR_BLACK);
-    init_pair(pair_overlay_lose,      c_neon_red,      COLOR_BLACK);
-    init_pair(pair_overlay_quit,      c_neon_sky,      COLOR_BLACK);
+    init_pair(pair_overlay_win,       c_green,        COLOR_BLACK);
+    init_pair(pair_overlay_lose,      c_red,          COLOR_BLACK);
+    init_pair(pair_overlay_quit,      c_sky,          COLOR_BLACK);
 
-    // Help overlay
-    init_pair(pair_help,              COLOR_WHITE,     c_canvas);
+    // Help screen
+    init_pair(pair_help,              COLOR_WHITE,    c_canvas);
 
-    // Dead enemy highlight
-    init_pair(pair_enemy_dead_purple, c_neon_lavender, -1);
+    // Dead enemy (was "purple" — now clear red for obvious "eliminated" signal)
+    init_pair(pair_enemy_dead_purple, c_red,          -1);
 
-    // Panel backgrounds (very dark fills)
-    init_pair(pair_bg_canvas,         COLOR_WHITE,     c_canvas);
-    init_pair(pair_bg_player,         c_neon_sky,      c_player_bg);
-    init_pair(pair_bg_arena,          c_neon_mint,     c_arena_bg);
-    init_pair(pair_bg_enemy,          c_neon_lavender, c_enemy_bg);
-    init_pair(pair_bg_footer,         COLOR_WHITE,     c_footer_bg);
+    // Panel background fills
+    init_pair(pair_bg_canvas,         COLOR_WHITE,    c_canvas);
+    init_pair(pair_bg_player,         c_sky,          c_player_bg);
+    init_pair(pair_bg_arena,          c_teal,         c_arena_bg);
+    init_pair(pair_bg_enemy,          c_indigo,       c_enemy_bg);
+    init_pair(pair_bg_footer,         COLOR_WHITE,    c_footer_bg);
 
-    // Panel section titles rendered inside the dark fills
-    init_pair(pair_title_player,      c_neon_yellow,   c_player_bg);   // gold on navy
-    init_pair(pair_title_enemy,       c_neon_pink,     c_enemy_bg);    // hot pink on violet
-    init_pair(pair_title_arena,       c_neon_gold,     c_arena_bg);    // gold on teal
+    // Panel section title bars
+    init_pair(pair_title_player,      c_sky,          c_player_bg);    // sky on navy
+    init_pair(pair_title_enemy,       c_indigo,       c_enemy_bg);     // indigo on violet
+    init_pair(pair_title_arena,       c_teal,         c_arena_bg);     // teal on dark teal
 
     // Entity interior boxes
-    init_pair(pair_bg_player_box,     COLOR_WHITE,     c_player_box_bg);
-    init_pair(pair_bg_enemy_box,      COLOR_WHITE,     c_enemy_box_bg);
-    init_pair(pair_bg_timeline,       COLOR_WHITE,     c_timeline_bg);
-    init_pair(pair_bg_log,            COLOR_WHITE,     c_log_bg);
-    init_pair(pair_bg_status,         COLOR_WHITE,     c_status_bg);
-    init_pair(pair_bg_artifact,       COLOR_WHITE,     c_artifact_bg);
+    init_pair(pair_bg_player_box,     COLOR_WHITE,    c_player_box_bg);
+    init_pair(pair_bg_enemy_box,      COLOR_WHITE,    c_enemy_box_bg);
+    init_pair(pair_bg_timeline,       COLOR_WHITE,    c_timeline_bg);
+    init_pair(pair_bg_log,            COLOR_WHITE,    c_log_bg);
+    init_pair(pair_bg_status,         COLOR_WHITE,    c_status_bg);
+    init_pair(pair_bg_artifact,       COLOR_WHITE,    c_artifact_bg);
 
-    // Banner rows: vivid colored text on the dark arena bg — no solid color blocks
-    init_pair(pair_bg_banner_1,       c_neon_red,      c_arena_bg);  // crimson
-    init_pair(pair_bg_banner_2,       c_neon_orange,   c_arena_bg);  // orange
-    init_pair(pair_bg_banner_3,       c_neon_yellow,   c_arena_bg);  // electric yellow
-    init_pair(pair_bg_banner_4,       c_neon_lime,     c_arena_bg);  // neon lime
-    init_pair(pair_bg_banner_5,       c_neon_cyan,     c_arena_bg);  // neon cyan
+    // Banner ASCII art — all rows the same color, matching the arena theme
+    init_pair(pair_bg_banner_1,       c_sky,          c_arena_bg);
+    init_pair(pair_bg_banner_2,       c_sky,          c_arena_bg);
+    init_pair(pair_bg_banner_3,       c_sky,          c_arena_bg);
+    init_pair(pair_bg_banner_4,       c_sky,          c_arena_bg);
+    init_pair(pair_bg_banner_5,       c_sky,          c_arena_bg);
 
-    // 7 border variants — rainbow cycling: cyan, sky, lime, lavender, gold, pink, mint
-    init_pair(pair_border_v1,         c_neon_cyan,     -1);
-    init_pair(pair_border_v2,         c_neon_sky,      -1);
-    init_pair(pair_border_v3,         c_neon_lime,     -1);
-    init_pair(pair_border_v4,         c_neon_lavender, -1);
-    init_pair(pair_border_v5,         c_neon_gold,     -1);
-    init_pair(pair_border_v6,         c_neon_pink,     -1);
-    init_pair(pair_border_v7,         c_neon_mint,     -1);
+    // 7 border variants — tasteful cycle, no pink
+    // sky → teal → green → amber → indigo → orange → gold
+    init_pair(pair_border_v1,         c_sky,          -1);
+    init_pair(pair_border_v2,         c_teal,         -1);
+    init_pair(pair_border_v3,         c_green,        -1);
+    init_pair(pair_border_v4,         c_amber,        -1);
+    init_pair(pair_border_v5,         c_indigo,       -1);
+    init_pair(pair_border_v6,         c_orange,       -1);
+    init_pair(pair_border_v7,         c_gold,         -1);
 }
 
 bool init_tui() {
