@@ -16,7 +16,7 @@
 using namespace std;
 
 const char *shared_memory_name = "/chrono_rift_game_state";
-const int default_roll_number = 240880;
+const int default_roll_number = 880;
 const useconds_t deadlock_check_sleep_us = 2000000;
 const int eclipse_relic_spawn_seconds = 25;
 
@@ -271,11 +271,11 @@ int second_last_digit(int value) {
 }
 
 int roll_player_hp() {
-    return 240880 + 100 + (rand() % 901);
+    return active_roll_number + 100 + (rand() % 901);
 }
 
 int roll_enemy_hp() {
-    return 80 + 50 + (rand() % 151);
+    return (active_roll_number % 100) + 50 + (rand() % 151);
 }
 
 int roll_enemy_speed() {
@@ -347,11 +347,11 @@ int roll_enemy_count() {
 }
 
 int player_damage_value() {
-    return game_state::player_base_damage;
+    return (active_roll_number % 10) + 10;
 }
 
 int enemy_damage_value() {
-    return game_state::enemy_attack_damage;
+    return ((active_roll_number / 10) % 10) + 10;
 }
 
 int find_first_living_enemy_locked() {
@@ -1378,7 +1378,7 @@ bool setup_shared_state() {
 void parse_arguments(int argc, char **argv) {
     (void)argc;
     (void)argv;
-    active_roll_number = 240880;
+    active_roll_number = default_roll_number;
 }
 
 int main(int argc, char **argv) {
