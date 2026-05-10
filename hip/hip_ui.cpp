@@ -1,5 +1,3 @@
-#include "hip_ui.h"
-
 void draw_box_at(int y, int x, int h, int w, int pair, int extra_attr) {
     if (h < 2 || w < 2) {
         return;

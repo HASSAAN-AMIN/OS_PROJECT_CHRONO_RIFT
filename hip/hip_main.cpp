@@ -1,5 +1,5 @@
-#include "hip_logic.h"
-#include "hip_ui.h"
+#include "hip_logic.cpp"
+#include "hip_ui.cpp"
 
 void handle_winch(int) {
     resize_pending = 1;

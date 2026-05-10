@@ -1,4 +1,72 @@
-#include "hip_logic.h"
+#include <cerrno>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <queue>
+#include <vector>
+
+#include <fcntl.h>
+#include <ncurses.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include "../gamestate.h"
+
+using namespace std;
+
+struct player_input_buffer {
+    int pending_key;
+    pthread_mutex_t lock;
+    pthread_cond_t cv;
+};
+
+struct entity_snapshot {
+    int hp;
+    int max_hp;
+    int stamina;
+    int max_stamina;
+    int damage;
+    time_t stun_end;
+    int inventory[game_state::inventory_slots];
+    int storage[game_state::inventory_slots];
+    bool active;
+    bool dead;
+    bool turn;
+};
+
+struct world_snapshot {
+    entity_snapshot players[game_state::max_players];
+    entity_snapshot enemies[game_state::max_enemies];
+    int active_player_count;
+    int active_enemy_count;
+    int active_player_index;
+    int solar_core_holder;
+    int lunar_blade_holder;
+    int eclipse_relic_holder;
+    int eclipse_relic_present;
+    int current_dropped_weapon;
+    int enemy_kills;
+    int total_kills;
+    int enemy_display_id[game_state::max_enemies];
+    int enemy_dead_count[game_state::max_enemies];
+    int outcome;
+    int roll_number;
+    char action_log[256];
+    char last_event[128];
+    pid_t arbiter_pid;
+    pid_t asp_pid;
+    pid_t hip_pid;
+    bool ultimate_active;
+    bool stun_active;
+    int target_enemy;
+};
+
+void *render_loop(void *);
 
 const char *shared_memory_name = "/chrono_rift_game_state";
 
