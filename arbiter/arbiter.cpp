@@ -762,10 +762,11 @@ void track_enemy_deaths_locked() {
             shared_state->total_kills += 1;
             shared_state->enemy_kills = shared_state->total_kills;
             shared_state->current_dropped_weapon = random_drop_weapon_id();
-            if ((rand() % 100) < 40) {
+            if (!eclipse_relic_dropped && (rand() % 100) < 40) {
                 shared_state->eclipse_relic_present = 1;
                 shared_state->eclipse_relic_holder = -1;
                 shared_state->current_dropped_weapon = game_state::eclipse_relic_id;
+                eclipse_relic_dropped = true;
             }
             if (shared_state->total_kills >= game_state::kills_required_to_win) {
                 shared_state->outcome = game_state::outcome_win;
