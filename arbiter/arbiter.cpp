@@ -40,6 +40,7 @@ volatile sig_atomic_t cached_asp_pid = 0;
 volatile sig_atomic_t cached_hip_pid = 0;
 volatile sig_atomic_t deadlock_broken = 0;
 time_t ultimate_end_time = 0;
+long long ultimate_end_time_ms = 0;
 time_t game_start_time = 0;
 bool eclipse_relic_dropped = false;
 int previous_enemy_hp[game_state::max_enemies] = {0};
@@ -221,6 +222,12 @@ bool is_active_player(int index) {
 
 bool is_active_enemy(int index) {
     return shared_state->enemy_hp[index] > 0;
+}
+
+long long monotonic_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<long long>(ts.tv_sec) * 1000LL + static_cast<long long>(ts.tv_nsec / 1000000LL);
 }
 
 void update_player_stamina() {
@@ -692,12 +699,19 @@ void update_cached_pids_locked() {
     cached_hip_pid = static_cast<sig_atomic_t>(shared_state->hip_pid);
 }
 
-void apply_signal_requests_locked(time_t now) {
+void apply_signal_requests_locked(time_t now, long long now_ms) {
     if (ultimate_requested) {
         ultimate_requested = 0;
         ultimate_triggered = 1;
         asp_frozen = 1;
         ultimate_end_time = now + 10;
+        ultimate_end_time_ms = now_ms + 10000;
+        for (int i = 0; i < game_state::max_enemies; ++i) {
+            if (shared_state->enemy_hp[i] > 0) {
+                shared_state->enemy_stamina[i] = 0;
+                shared_state->enemy_ready_since[i] = 0;
+            }
+        }
     }
     if (stun_requested) {
         stun_requested = 0;
@@ -706,15 +720,16 @@ void apply_signal_requests_locked(time_t now) {
     }
 }
 
-void process_freeze_endings_locked(time_t now) {
+void process_freeze_endings_locked(time_t now, long long now_ms) {
     if (alarm_fired) {
         alarm_fired = 0;
     }
-    if (ultimate_end_time > 0 && now >= ultimate_end_time) {
+    if (ultimate_end_time_ms > 0 && now_ms >= ultimate_end_time_ms) {
+        ultimate_end_time_ms = 0;
         ultimate_end_time = 0;
         ultimate_ended = 1;
     }
-    bool asp_should_stay_frozen = (ultimate_end_time > 0);
+    bool asp_should_stay_frozen = (ultimate_end_time_ms > 0);
     if (asp_frozen && !asp_should_stay_frozen) {
         pid_t asp_pid = static_cast<pid_t>(cached_asp_pid);
         if (asp_pid > 0) {
@@ -725,16 +740,18 @@ void process_freeze_endings_locked(time_t now) {
     (void)now;
 }
 
-void schedule_next_alarm_locked(time_t now) {
+void schedule_next_alarm_locked(time_t now, long long now_ms) {
     int next_alarm_seconds = 0;
-    if (ultimate_end_time > now) {
-        next_alarm_seconds = static_cast<int>(ultimate_end_time - now);
+    if (ultimate_end_time_ms > now_ms) {
+        long long delta_ms = ultimate_end_time_ms - now_ms;
+        next_alarm_seconds = static_cast<int>((delta_ms + 999) / 1000);
     }
     if (next_alarm_seconds <= 0) {
         alarm(0);
         return;
     }
     alarm(next_alarm_seconds);
+    (void)now;
 }
 
 void track_enemy_deaths_locked() {
@@ -1005,6 +1022,13 @@ void execute_player_action_locked(int player_id, int action, int target, time_t 
             }
             asp_frozen = 1;
             ultimate_end_time = now + 10;
+            ultimate_end_time_ms = monotonic_ms() + 10000;
+            for (int i = 0; i < game_state::max_enemies; ++i) {
+                if (shared_state->enemy_hp[i] > 0) {
+                    shared_state->enemy_stamina[i] = 0;
+                    shared_state->enemy_ready_since[i] = 0;
+                }
+            }
             ultimate_triggered = 1;
         }
     } else if (action == game_state::action_use_weapon) {
@@ -1051,10 +1075,11 @@ bool tick_stamina_progression(bool apply_stamina_tick) {
         return false;
     }
     time_t now = time(nullptr);
+    long long now_ms = monotonic_ms();
     update_cached_pids_locked();
-    apply_signal_requests_locked(now);
-    process_freeze_endings_locked(now);
-    schedule_next_alarm_locked(now);
+    apply_signal_requests_locked(now, now_ms);
+    process_freeze_endings_locked(now, now_ms);
+    schedule_next_alarm_locked(now, now_ms);
     if (ultimate_triggered) {
         ultimate_triggered = 0;
         snprintf(shared_state->action_log, sizeof(shared_state->action_log), "ultimate triggered: asp frozen for 10s");
@@ -1078,7 +1103,9 @@ bool tick_stamina_progression(bool apply_stamina_tick) {
     process_player_actions_locked(now);
     if (apply_stamina_tick) {
         update_player_stamina();
-        update_enemy_stamina();
+        if (!asp_frozen && ultimate_end_time_ms <= 0) {
+            update_enemy_stamina();
+        }
     }
     apply_enemy_turn_timeouts_locked(now);
     track_enemy_deaths_locked();
