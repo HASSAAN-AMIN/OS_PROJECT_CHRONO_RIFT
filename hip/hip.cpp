@@ -944,6 +944,96 @@ void handle_key_for_player(int player_id, int ch) {
     }
 }
 
+int count_inventory_fill(const int *inventory) {
+    int count = 0;
+    for (int s = 0; s < game_state::inventory_slots; ++s) {
+        if (inventory[s] > 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void update_player_animation_triggers(const world_snapshot &snap) {
+    for (int i = 0; i < game_state::max_players; ++i) {
+        if (!snap.players[i].active) {
+            continue;
+        }
+        int idx = i;
+        int hp = snap.players[i].hp;
+        if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
+            hit_flash_frame[idx] = current_frame;
+        }
+        if (prev_hp[idx] > 0 && hp <= 0) {
+            death_flash_frame[idx] = current_frame;
+        }
+        if (prev_stamina[idx] >= 0 && prev_stamina[idx] < snap.players[i].max_stamina &&
+            snap.players[i].stamina >= snap.players[i].max_stamina) {
+            full_stamina_flash_frame[idx] = current_frame;
+            stamina_ready_pulse_frame[i] = current_frame;
+        }
+        int fill_count = count_inventory_fill(snap.players[i].inventory);
+        if (prev_player_inventory_fill[i] >= 0 && fill_count > prev_player_inventory_fill[i]) {
+            pickup_sweep_frame[i] = current_frame;
+        }
+        prev_player_inventory_fill[i] = fill_count;
+        prev_hp[idx] = hp;
+        prev_stamina[idx] = snap.players[i].stamina;
+    }
+}
+
+void update_enemy_animation_triggers(const world_snapshot &snap) {
+    for (int i = 0; i < game_state::max_enemies; ++i) {
+        if (!snap.enemies[i].active) {
+            continue;
+        }
+        int idx = game_state::max_players + i;
+        int hp = snap.enemies[i].hp;
+        int dead_count = snap.enemy_dead_count[i];
+        if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
+            hit_flash_frame[idx] = current_frame;
+        }
+        if (prev_hp[idx] > 0 && hp <= 0) {
+            death_flash_frame[idx] = current_frame;
+        }
+        if (prev_enemy_dead_count[i] >= 0 && dead_count > prev_enemy_dead_count[i]) {
+            death_flash_frame[idx] = current_frame;
+            hit_flash_frame[idx] = current_frame;
+        }
+        if (prev_enemy_display_id[i] >= 0 && snap.enemy_display_id[i] > prev_enemy_display_id[i]) {
+            enemy_spawn_flash_frame[i] = current_frame;
+        }
+        prev_hp[idx] = hp;
+        prev_stamina[idx] = snap.enemies[i].stamina;
+        prev_enemy_dead_count[i] = dead_count;
+        prev_enemy_display_id[i] = snap.enemy_display_id[i];
+    }
+}
+
+void update_global_animation_triggers(const world_snapshot &snap) {
+    if (prev_total_kills >= 0 && snap.total_kills > prev_total_kills) {
+        kill_pop_frame = current_frame;
+    }
+    prev_total_kills = snap.total_kills;
+    if (!prev_ultimate_active && snap.ultimate_active) {
+        ultimate_shockwave_frame = current_frame;
+    }
+    prev_ultimate_active = snap.ultimate_active ? 1 : 0;
+    if (strstr(snap.last_event, "deadlock_break") != nullptr || strstr(snap.action_log, "deadlock") != nullptr) {
+        deadlock_log_frame = current_frame;
+    }
+    if (prev_dropped_weapon == 0 && snap.current_dropped_weapon != 0) {
+        weapon_drop_flash_frame = current_frame;
+    }
+    prev_dropped_weapon = snap.current_dropped_weapon;
+}
+
+void update_animation_triggers_from_snapshot(const world_snapshot &snap) {
+    update_player_animation_triggers(snap);
+    update_enemy_animation_triggers(snap);
+    update_global_animation_triggers(snap);
+}
+
 void synth_enemy_inventory(int enemy_index, int *out, int solar_core_holder, int lunar_blade_holder, int eclipse_holder) {
     for (int s = 0; s < game_state::inventory_slots; ++s) {
         out[s] = 0;
@@ -2205,76 +2295,7 @@ void render_frame(const world_snapshot &snap) {
     erase();
     int term_h, term_w;
     getmaxyx(stdscr, term_h, term_w);
-    for (int i = 0; i < game_state::max_players; ++i) {
-        if (!snap.players[i].active) {
-            continue;
-        }
-        int idx = i;
-        int hp = snap.players[i].hp;
-        if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
-            hit_flash_frame[idx] = current_frame;
-        }
-        if (prev_hp[idx] > 0 && hp <= 0) {
-            death_flash_frame[idx] = current_frame;
-        }
-        if (prev_stamina[idx] >= 0 && prev_stamina[idx] < snap.players[i].max_stamina &&
-            snap.players[i].stamina >= snap.players[i].max_stamina) {
-            full_stamina_flash_frame[idx] = current_frame;
-            stamina_ready_pulse_frame[i] = current_frame;
-        }
-        int fill_count = 0;
-        for (int s = 0; s < game_state::inventory_slots; ++s) {
-            if (snap.players[i].inventory[s] > 0) {
-                fill_count++;
-            }
-        }
-        if (prev_player_inventory_fill[i] >= 0 && fill_count > prev_player_inventory_fill[i]) {
-            pickup_sweep_frame[i] = current_frame;
-        }
-        prev_player_inventory_fill[i] = fill_count;
-        prev_hp[idx] = hp;
-        prev_stamina[idx] = snap.players[i].stamina;
-    }
-    for (int i = 0; i < game_state::max_enemies; ++i) {
-        if (!snap.enemies[i].active) {
-            continue;
-        }
-        int idx = game_state::max_players + i;
-        int hp = snap.enemies[i].hp;
-        int dead_count = snap.enemy_dead_count[i];
-        if (prev_hp[idx] > 0 && hp < prev_hp[idx]) {
-            hit_flash_frame[idx] = current_frame;
-        }
-        if (prev_hp[idx] > 0 && hp <= 0) {
-            death_flash_frame[idx] = current_frame;
-        }
-        if (prev_enemy_dead_count[i] >= 0 && dead_count > prev_enemy_dead_count[i]) {
-            death_flash_frame[idx] = current_frame;
-            hit_flash_frame[idx] = current_frame;
-        }
-        if (prev_enemy_display_id[i] >= 0 && snap.enemy_display_id[i] > prev_enemy_display_id[i]) {
-            enemy_spawn_flash_frame[i] = current_frame;
-        }
-        prev_hp[idx] = hp;
-        prev_stamina[idx] = snap.enemies[i].stamina;
-        prev_enemy_dead_count[i] = dead_count;
-        prev_enemy_display_id[i] = snap.enemy_display_id[i];
-    }
-    if (prev_total_kills >= 0 && snap.total_kills > prev_total_kills) {
-        kill_pop_frame = current_frame;
-    }
-    prev_total_kills = snap.total_kills;
-    if (!prev_ultimate_active && snap.ultimate_active) {
-        ultimate_shockwave_frame = current_frame;
-    }
-    prev_ultimate_active = snap.ultimate_active ? 1 : 0;
-    if (strstr(snap.last_event, "deadlock_break") != nullptr || strstr(snap.action_log, "deadlock") != nullptr) {
-        deadlock_log_frame = current_frame;
-    }
-    if (prev_dropped_weapon == 0 && snap.current_dropped_weapon != 0) {
-        weapon_drop_flash_frame = current_frame;
-    }
-    prev_dropped_weapon = snap.current_dropped_weapon;
+    update_animation_triggers_from_snapshot(snap);
     if (term_h < 14 || term_w < 70) {
         attron(COLOR_PAIR(pair_status_warn) | A_BOLD | A_BLINK);
         mvprintw(0, 0, "terminal too small (need at least 70x14)");
@@ -2480,20 +2501,20 @@ bool register_signals() {
     return true;
 }
 
-// =============================================================================
-// DARK COLORFUL THEME — harmonious palette, no pink/magenta.
-//
-// Custom color indices (when can_change_color()):
-//   16-26  : panel background colors  (very dark)
-//   27-31  : unused banner bg slots   (kept for index alignment)
-//   32-40  : foreground text colors   (vibrant but tasteful)
-//
-// Enemy timeline:  unspawned = slate-blue  |  alive = sky-blue  |  dead = RED
-// Border variants: sky → teal → green → amber → indigo → orange → gold
-// No pink or magenta anywhere.
-// =============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
 void init_color_pairs() {
-    // ---- background indices -------------------------------------------------
+
     int c_canvas        = COLOR_BLACK;
     int c_player_bg     = COLOR_BLUE;
     int c_arena_bg      = COLOR_BLACK;
@@ -2506,19 +2527,19 @@ void init_color_pairs() {
     int c_status_bg     = COLOR_BLACK;
     int c_artifact_bg   = COLOR_BLACK;
 
-    // ---- foreground / text color indices (fallback = nearest std color) -----
-    int c_sky    = COLOR_CYAN;    // sky blue   — alive enemies, player turn, stamina
-    int c_green  = COLOR_GREEN;   // soft green — HP high, status ok, kills
-    int c_amber  = COLOR_YELLOW;  // warm amber — HP med, panel titles
-    int c_orange = COLOR_YELLOW;  // orange     — HP low, status warn, banner row 3
-    int c_red    = COLOR_RED;     // clear red  — HP crit, dead entities
-    int c_teal   = COLOR_CYAN;    // teal       — arena, stamina full, log title
-    int c_indigo = COLOR_BLUE;    // soft indigo— enemy panel, eclipse relic, lunar
-    int c_gold   = COLOR_YELLOW;  // gold       — solar, banner, kill counter
-    int c_slate  = COLOR_WHITE;   // blue-gray  — unspawned enemies, iron weapon
+
+    int c_sky    = COLOR_CYAN;
+    int c_green  = COLOR_GREEN;
+    int c_amber  = COLOR_YELLOW;
+    int c_orange = COLOR_YELLOW;
+    int c_red    = COLOR_RED;
+    int c_teal   = COLOR_CYAN;
+    int c_indigo = COLOR_BLUE;
+    int c_gold   = COLOR_YELLOW;
+    int c_slate  = COLOR_WHITE;
 
     if (can_change_color()) {
-        // background slots
+
         c_canvas        = 16;
         c_player_bg     = 17;
         c_arena_bg      = 18;
@@ -2530,7 +2551,7 @@ void init_color_pairs() {
         c_log_bg        = 24;
         c_status_bg     = 25;
         c_artifact_bg   = 26;
-        // foreground slots
+
         c_sky    = 32;
         c_green  = 33;
         c_amber  = 34;
@@ -2541,113 +2562,113 @@ void init_color_pairs() {
         c_gold   = 39;
         c_slate  = 40;
 
-        // ---- very dark panel backgrounds (ncurses 0-1000 scale) -------------
-        init_color(c_canvas,        18,  20,  32);  // dark blue-black
-        init_color(c_player_bg,      8,  14,  52);  // deep navy
-        init_color(c_arena_bg,       6,  28,  32);  // deep teal-black
-        init_color(c_enemy_bg,      22,   8,  42);  // deep violet-black
-        init_color(c_footer_bg,      4,   4,  12);  // near black
-        init_color(c_player_box_bg,  4,  10,  40);  // dark navy interior
-        init_color(c_enemy_box_bg,  16,   5,  32);  // dark purple interior
-        init_color(c_timeline_bg,    4,   4,  26);  // dark indigo
-        init_color(c_log_bg,         4,  18,  22);  // dark teal
-        init_color(c_status_bg,      4,   8,  24);  // dark midnight blue
-        init_color(c_artifact_bg,    2,   5,  16);  // near-black navy
 
-        // ---- foreground palette — vibrant but not garish --------------------
-        // Inspired by a good dark IDE theme (sky, green, amber, orange, red, teal…)
-        init_color(c_sky,    310, 760, 980);  // #4FC3F7  sky blue
-        init_color(c_green,  490, 800, 510);  // #81CC83  soft green
-        init_color(c_amber, 1000, 720, 180);  // #FFB82E  warm amber
-        init_color(c_orange,1000, 560,  60);  // #FF8F0F  orange
-        init_color(c_red,    900, 270, 250);  // #E64540  clear red
-        init_color(c_teal,   200, 714, 694);  // #33B6B1  teal
-        init_color(c_indigo, 580, 490, 870);  // #947DDE  soft indigo
-        init_color(c_gold,  1000, 840, 100);  // #FFD619  gold
-        init_color(c_slate,  480, 580, 660);  // #7B94A8  blue-gray slate
+        init_color(c_canvas,        18,  20,  32);
+        init_color(c_player_bg,      8,  14,  52);
+        init_color(c_arena_bg,       6,  28,  32);
+        init_color(c_enemy_bg,      22,   8,  42);
+        init_color(c_footer_bg,      4,   4,  12);
+        init_color(c_player_box_bg,  4,  10,  40);
+        init_color(c_enemy_box_bg,  16,   5,  32);
+        init_color(c_timeline_bg,    4,   4,  26);
+        init_color(c_log_bg,         4,  18,  22);
+        init_color(c_status_bg,      4,   8,  24);
+        init_color(c_artifact_bg,    2,   5,  16);
+
+
+
+        init_color(c_sky,    310, 760, 980);
+        init_color(c_green,  490, 800, 510);
+        init_color(c_amber, 1000, 720, 180);
+        init_color(c_orange,1000, 560,  60);
+        init_color(c_red,    900, 270, 250);
+        init_color(c_teal,   200, 714, 694);
+        init_color(c_indigo, 580, 490, 870);
+        init_color(c_gold,  1000, 840, 100);
+        init_color(c_slate,  480, 580, 660);
     }
 
-    // ---- color pair definitions ---------------------------------------------
 
-    // General text
+
+
     init_pair(pair_default,           COLOR_WHITE,    -1);
 
-    // Borders
-    //   normal  = slate  (unspawned enemy cells, idle panel edges)
-    //   active  = sky    (alive enemies in timeline, player whose turn it is)
-    //   dead    = red    (eliminated entities)
+
+
+
+
     init_pair(pair_border_normal,     c_slate,        -1);
     init_pair(pair_border_active,     c_sky,          -1);
     init_pair(pair_border_dead,       c_red,          -1);
 
-    // HP bar gradient: green → amber → orange → red
+
     init_pair(pair_hp_high,           c_green,        -1);
     init_pair(pair_hp_med,            c_amber,        -1);
     init_pair(pair_hp_low,            c_orange,       -1);
     init_pair(pair_hp_critical,       c_red,          -1);
 
-    // Stamina
+
     init_pair(pair_stamina,           c_teal,         -1);
     init_pair(pair_stamina_full,      c_sky,          -1);
 
-    // Log + status
+
     init_pair(pair_log,               COLOR_WHITE,    -1);
     init_pair(pair_status_ok,         c_green,        -1);
     init_pair(pair_status_warn,       c_orange,       -1);
 
-    // Artifacts
+
     init_pair(pair_artifact_solar,    c_gold,         -1);
     init_pair(pair_artifact_lunar,    c_sky,          -1);
     init_pair(pair_artifact_eclipse,  c_indigo,       -1);
     init_pair(pair_artifact_ground,   COLOR_WHITE,    -1);
 
-    // Footer command bar
+
     init_pair(pair_command_bar,       COLOR_WHITE,    c_footer_bg);
 
-    // Inventory weapons — each a distinct tasteful color (NO pink/magenta)
-    init_pair(pair_inv_empty,         COLOR_BLACK,    COLOR_BLACK);
-    init_pair(pair_inv_splinter,      c_green,        COLOR_BLACK);  // S - green
-    init_pair(pair_inv_venom,         c_teal,         COLOR_BLACK);  // V - teal
-    init_pair(pair_inv_obsidian,      c_slate,        COLOR_BLACK);  // A - slate
-    init_pair(pair_inv_frost,         c_sky,          COLOR_BLACK);  // F - sky
-    init_pair(pair_inv_thunder,       c_amber,        COLOR_BLACK);  // T - amber
-    init_pair(pair_inv_iron,          COLOR_WHITE,    COLOR_BLACK);  // I - white
-    init_pair(pair_inv_solar,         c_gold,         COLOR_BLACK);  // O - gold
-    init_pair(pair_inv_lunar,         c_indigo,       COLOR_BLACK);  // L - indigo
-    init_pair(pair_inv_eclipse,       c_orange,       COLOR_BLACK);  // E - orange
 
-    // Panel title text
+    init_pair(pair_inv_empty,         COLOR_BLACK,    COLOR_BLACK);
+    init_pair(pair_inv_splinter,      c_green,        COLOR_BLACK);
+    init_pair(pair_inv_venom,         c_teal,         COLOR_BLACK);
+    init_pair(pair_inv_obsidian,      c_slate,        COLOR_BLACK);
+    init_pair(pair_inv_frost,         c_sky,          COLOR_BLACK);
+    init_pair(pair_inv_thunder,       c_amber,        COLOR_BLACK);
+    init_pair(pair_inv_iron,          COLOR_WHITE,    COLOR_BLACK);
+    init_pair(pair_inv_solar,         c_gold,         COLOR_BLACK);
+    init_pair(pair_inv_lunar,         c_indigo,       COLOR_BLACK);
+    init_pair(pair_inv_eclipse,       c_orange,       COLOR_BLACK);
+
+
     init_pair(pair_panel_title,       c_amber,        -1);
     init_pair(pair_arena_title,       c_teal,         -1);
     init_pair(pair_banner,            c_gold,         -1);
 
-    // Kill counter
+
     init_pair(pair_kill_counter,      c_green,        -1);
 
-    // End-game overlays
+
     init_pair(pair_overlay_win,       c_green,        COLOR_BLACK);
     init_pair(pair_overlay_lose,      c_red,          COLOR_BLACK);
     init_pair(pair_overlay_quit,      c_sky,          COLOR_BLACK);
 
-    // Help screen
+
     init_pair(pair_help,              COLOR_WHITE,    c_canvas);
 
-    // Dead enemy (was "purple" — now clear red for obvious "eliminated" signal)
+
     init_pair(pair_enemy_dead_purple, c_red,          -1);
 
-    // Panel background fills
+
     init_pair(pair_bg_canvas,         COLOR_WHITE,    c_canvas);
     init_pair(pair_bg_player,         c_sky,          c_player_bg);
     init_pair(pair_bg_arena,          c_teal,         c_arena_bg);
     init_pair(pair_bg_enemy,          c_indigo,       c_enemy_bg);
     init_pair(pair_bg_footer,         COLOR_WHITE,    c_footer_bg);
 
-    // Panel section title bars
-    init_pair(pair_title_player,      c_sky,          c_player_bg);    // sky on navy
-    init_pair(pair_title_enemy,       c_indigo,       c_enemy_bg);     // indigo on violet
-    init_pair(pair_title_arena,       c_teal,         c_arena_bg);     // teal on dark teal
 
-    // Entity interior boxes
+    init_pair(pair_title_player,      c_sky,          c_player_bg);
+    init_pair(pair_title_enemy,       c_indigo,       c_enemy_bg);
+    init_pair(pair_title_arena,       c_teal,         c_arena_bg);
+
+
     init_pair(pair_bg_player_box,     COLOR_WHITE,    c_player_box_bg);
     init_pair(pair_bg_enemy_box,      COLOR_WHITE,    c_enemy_box_bg);
     init_pair(pair_bg_timeline,       COLOR_WHITE,    c_timeline_bg);
@@ -2655,15 +2676,15 @@ void init_color_pairs() {
     init_pair(pair_bg_status,         COLOR_WHITE,    c_status_bg);
     init_pair(pair_bg_artifact,       COLOR_WHITE,    c_artifact_bg);
 
-    // Banner ASCII art — all rows the same color, matching the arena theme
+
     init_pair(pair_bg_banner_1,       c_sky,          c_arena_bg);
     init_pair(pair_bg_banner_2,       c_sky,          c_arena_bg);
     init_pair(pair_bg_banner_3,       c_sky,          c_arena_bg);
     init_pair(pair_bg_banner_4,       c_sky,          c_arena_bg);
     init_pair(pair_bg_banner_5,       c_sky,          c_arena_bg);
 
-    // 7 border variants — tasteful cycle, no pink
-    // sky → teal → green → amber → indigo → orange → gold
+
+
     init_pair(pair_border_v1,         c_sky,          -1);
     init_pair(pair_border_v2,         c_teal,         -1);
     init_pair(pair_border_v3,         c_green,        -1);
