@@ -544,18 +544,30 @@ int swap_in_from_storage_locked(int player_id) {
 }
 
 void initialize_players() {
-    int per_player_speed = 100 / game_state::max_players;
+    int player_count = shared_state->active_player_count;
+    if (player_count < 1 || player_count > game_state::max_players) {
+        player_count = game_state::max_players;
+    }
+    int per_player_speed = 100 / player_count;
     if (per_player_speed < 1) {
         per_player_speed = 1;
     }
     for (int i = 0; i < game_state::max_players; ++i) {
-        shared_state->player_hp[i] = roll_player_hp();
-        shared_state->player_max_hp[i] = shared_state->player_hp[i];
-        shared_state->player_speed[i] = per_player_speed;
-        shared_state->player_stamina[i] = 0;
-        shared_state->player_damage[i] = player_damage_value();
+        if (i < player_count) {
+            shared_state->player_hp[i] = roll_player_hp();
+            shared_state->player_max_hp[i] = shared_state->player_hp[i];
+            shared_state->player_speed[i] = per_player_speed;
+            shared_state->player_stamina[i] = 0;
+            shared_state->player_damage[i] = player_damage_value();
+        } else {
+            shared_state->player_hp[i] = 0;
+            shared_state->player_max_hp[i] = 0;
+            shared_state->player_speed[i] = 0;
+            shared_state->player_stamina[i] = 0;
+            shared_state->player_damage[i] = 0;
+        }
     }
-    shared_state->active_player_count = game_state::max_players;
+    shared_state->active_player_count = player_count;
 }
 
 void initialize_enemies() {
@@ -612,6 +624,18 @@ bool initialize_seeded_stats() {
         return false;
     }
     return true;
+}
+
+void wait_for_hip_party_size() {
+    const int max_attempts = 30;
+    const useconds_t sleep_us = 100000;
+    for (int attempt = 0; attempt < max_attempts && arbiter_running; ++attempt) {
+        int player_count = shared_state->active_player_count;
+        if (player_count > 0 && player_count <= game_state::max_players) {
+            return;
+        }
+        usleep(sleep_us);
+    }
 }
 
 bool is_player_entity_id(int entity_id) {
@@ -1354,6 +1378,7 @@ bool setup_shared_state() {
     if (!initialize_semaphores()) {
         return false;
     }
+    wait_for_hip_party_size();
     if (!initialize_seeded_stats()) {
         return false;
     }
