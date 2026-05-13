@@ -1,3 +1,7 @@
+# Vibe Coded Project !!
+` Ignore this VIBE CODED Project not really worth checking`
+
+
 # chrono rift
 
 chrono rift is a multi-process linux tactical combat prototype built with posix shared memory, raw pthreads, semaphores, and ncurses.
